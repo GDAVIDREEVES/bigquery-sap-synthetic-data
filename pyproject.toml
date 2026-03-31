@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acdoca-generator"
+version = "1.0.0"
+description = "Synthetic SAP ACDOCA journal generator for Databricks"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "pyspark>=3.5.0,<4",
+  "streamlit>=1.28.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0.0"]
+
+[tool.setuptools.packages.find]
+include = ["acdoca_generator*"]
+
+[tool.pytest.ini_options]
+testpaths = ["acdoca_generator/tests"]
+pythonpath = ["."]
