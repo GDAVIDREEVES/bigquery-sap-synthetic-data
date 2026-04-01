@@ -26,13 +26,15 @@ class CompanyRow:
     role_code: str
 
 
-def build_companies(spark: SparkSession, country_isos: List[str], _seed: int) -> DataFrame:
+def build_companies(
+    spark: SparkSession, country_isos: List[str], industry_key: str, _seed: int
+) -> DataFrame:
     """One company code per selected country; +1 BUKRS if duplicate base (SPEC §6.2)."""
     rows: list[CompanyRow] = []
     per_iso_count: dict[str, int] = {}
     for iso in sorted(country_isos):
         c = get_country(iso)
-        role = pick_role_for_country(iso)
+        role = pick_role_for_country(iso, industry_key)
         n = per_iso_count.get(iso, 0)
         per_iso_count[iso] = n + 1
         base = c.sample_bukrs

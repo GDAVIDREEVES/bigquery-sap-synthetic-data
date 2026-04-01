@@ -90,9 +90,27 @@ DEFAULT_ROLES: tuple[EntityRole, ...] = (
 
 ROLE_BY_CODE = {r.code: r for r in DEFAULT_ROLES}
 
+# Optional per-industry overrides (canonical industry keys). Unlisted countries fall back to DEFAULT_ROLES scan.
+INDUSTRY_COUNTRY_ROLE: dict[str, dict[str, str]] = {
+    "technology": {"US": "IPPR", "IN": "RDSC", "DE": "LRD", "GB": "RHQ", "IL": "RDSC"},
+    "pharmaceutical": {"US": "IPPR", "CH": "IPPR", "IE": "FINC", "DE": "FRMF", "IN": "TOLL"},
+    "medical_device": {"US": "IPPR", "DE": "FRMF", "IN": "CMFR"},
+    "consumer_goods": {"US": "LRD", "DE": "LRD", "GB": "LRD"},
+    "media": {"US": "IPPR", "GB": "LRD", "FR": "COMM"},
+}
 
-def pick_role_for_country(iso: str) -> EntityRole:
-    """First role that lists the country; else LRD."""
+
+def pick_role_for_country(iso: str, industry_key: str | None = None) -> EntityRole:
+    """Resolve entity role: industry-specific map first, else first DEFAULT_ROLES match; else LRD."""
+    if industry_key:
+        from acdoca_generator.config.industries import canonical_industry_key
+
+        ck = canonical_industry_key(industry_key)
+        ov = INDUSTRY_COUNTRY_ROLE.get(ck)
+        if ov:
+            code = ov.get(iso)
+            if code and code in ROLE_BY_CODE:
+                return ROLE_BY_CODE[code]
     for r in DEFAULT_ROLES:
         if iso in r.typical_countries_iso:
             return r

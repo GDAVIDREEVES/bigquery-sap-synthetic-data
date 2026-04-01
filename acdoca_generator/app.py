@@ -16,7 +16,8 @@ from pyspark.sql import functions as F
 
 from acdoca_generator.config.countries import COUNTRIES
 from acdoca_generator.config.field_tiers import COMPLEXITY_LEVELS, fields_for_complexity
-from acdoca_generator.config.industries import industry_keys
+from acdoca_generator.config.industries import canonical_industry_key, industry_keys
+from acdoca_generator.config.presets import DEMO_PRESETS, preset_keys
 from acdoca_generator.generators.pipeline import GenerationConfig, generate_acdoca_dataframe
 from acdoca_generator.utils.schema import acdoca_schema
 from acdoca_generator.utils.spark_writer import GenerationParams, write_acdoca_table
@@ -35,59 +36,113 @@ def main() -> None:
     st.set_page_config(page_title="ACDOCA Synthetic Generator", layout="wide")
     st.title("ACDOCA Synthetic Data Generator")
 
-    st.subheader("Industry template")
-    ind_labels = {k: k.replace("_", " ").title() for k in industry_keys()}
-    industry = st.radio(
-        "Industry",
-        options=list(ind_labels.keys()),
-        format_func=lambda k: ind_labels[k],
-        horizontal=True,
+    st.subheader("Demo preset")
+    preset_choice_options = ["custom"] + preset_keys()
+    preset_labels = {"custom": "Custom (use widgets below)"}
+    preset_labels.update({k: DEMO_PRESETS[k].label for k in preset_keys()})
+    preset_choice = st.selectbox(
+        "Preset",
+        options=preset_choice_options,
+        format_func=lambda k: preset_labels[k],
+        help="Presets tune volume, IC share, and validation for faster repeat demos.",
     )
 
-    st.subheader("Countries")
-    opts = _country_options()
-    all_isos = [o[1] for o in opts]
-    name_by_iso = {iso: name for name, iso in opts}
-    selected_names = st.multiselect(
-        "Countries (ISO stored as GB for United Kingdom)",
-        options=[name_by_iso[i] for i in all_isos],
-        default=[name_by_iso[i] for i in ("US", "DE", "GB") if i in name_by_iso],
-    )
-    selected_isos = [next(iso for name, iso in opts if name == n) for n in selected_names]
-    if not selected_isos:
-        st.warning("Select at least one country.")
-        selected_isos = ["US"]
+    industry = None
+    selected_isos = None
+    fiscal_year = None
+    fiscal_variant = None
+    complexity = None
+    txn_per = None
+    ic_pct = None
+    use_industry_ic = False
+    rev = None
+    closing = None
+    validation_profile = "strict"
 
-    st.subheader("Fiscal year")
-    fy_col1, fy_col2 = st.columns(2)
-    with fy_col1:
-        fiscal_year = st.selectbox("Year", options=list(range(2020, 2031)), index=6)
-    with fy_col2:
-        fiscal_variant = st.radio(
-            "Fiscal calendar",
-            options=["calendar", "april"],
-            format_func=lambda x: "Calendar (Jan–Dec)" if x == "calendar" else "April (Apr–Mar)",
+    if preset_choice == "custom":
+        st.subheader("Industry template")
+        ind_labels = {k: k.replace("_", " ").title() for k in industry_keys()}
+        industry = st.radio(
+            "Industry",
+            options=list(ind_labels.keys()),
+            format_func=lambda k: ind_labels[k],
             horizontal=True,
         )
 
-    st.subheader("Complexity tier")
-    complexity = st.radio(
-        "Tier",
-        options=list(COMPLEXITY_LEVELS),
-        format_func=lambda c: {
-            "light": "Light (~55 fields)",
-            "medium": "Medium (~130 fields)",
-            "high": "High (~250 fields)",
-            "very_high": "Very High (~400+ fields)",
-        }[c],
-        horizontal=True,
-    )
+        st.subheader("Countries")
+        opts = _country_options()
+        all_isos = [o[1] for o in opts]
+        name_by_iso = {iso: name for name, iso in opts}
+        selected_names = st.multiselect(
+            "Countries (ISO stored as GB for United Kingdom)",
+            options=[name_by_iso[i] for i in all_isos],
+            default=[name_by_iso[i] for i in ("US", "DE", "GB") if i in name_by_iso],
+        )
+        selected_isos = [next(iso for name, iso in opts if name == n) for n in selected_names]
+        if not selected_isos:
+            st.warning("Select at least one country.")
+            selected_isos = ["US"]
 
-    st.subheader("Volume")
-    txn_per = st.slider("Transactions per company code per period", 100, 50_000, 1_000, step=100)
-    ic_pct = st.slider("Intercompany % of lines", 5, 60, 25)
-    rev = st.checkbox("Include reversals (~5% flagged)", value=True)
-    closing = st.checkbox("Include closing entries", value=True)
+        st.subheader("Fiscal year")
+        fy_col1, fy_col2 = st.columns(2)
+        with fy_col1:
+            fiscal_year = st.selectbox("Year", options=list(range(2020, 2031)), index=6)
+        with fy_col2:
+            fiscal_variant = st.radio(
+                "Fiscal calendar",
+                options=["calendar", "april"],
+                format_func=lambda x: "Calendar (Jan–Dec)" if x == "calendar" else "April (Apr–Mar)",
+                horizontal=True,
+            )
+
+        st.subheader("Complexity tier")
+        complexity = st.radio(
+            "Tier",
+            options=list(COMPLEXITY_LEVELS),
+            format_func=lambda c: {
+                "light": "Light (~55 fields)",
+                "medium": "Medium (~130 fields)",
+                "high": "High (~250 fields)",
+                "very_high": "Very High (~400+ fields)",
+            }[c],
+            horizontal=True,
+        )
+
+        st.subheader("Volume")
+        txn_per = st.slider("Transactions per company code per period", 100, 50_000, 1_000, step=100)
+        use_industry_ic = st.checkbox(
+            "Use industry default IC % (template ic_share_default)",
+            value=False,
+        )
+        ic_pct = st.slider("Intercompany % of lines", 5, 60, 25, disabled=use_industry_ic)
+        rev = st.checkbox("Include reversals (~5% flagged)", value=True)
+        closing = st.checkbox("Include closing entries", value=True)
+
+        st.subheader("Validation")
+        validation_profile = st.radio(
+            "Validation profile",
+            options=["strict", "fast"],
+            format_func=lambda x: "Strict (full PK uniqueness scan)" if x == "strict" else "Fast (skip PK full scan)",
+            horizontal=True,
+        )
+    else:
+        pr = DEMO_PRESETS[preset_choice]
+        st.info(
+            f"**{pr.label}** — industry `{pr.industry_key}`, countries `{pr.country_isos_csv}`, "
+            f"FY **{pr.fiscal_year}** ({pr.fiscal_variant}), complexity **{pr.complexity}**, "
+            f"**{pr.txn_per_cc_per_period}** txn/cc/period, validation **{pr.validation_profile}**."
+        )
+        industry = pr.industry_key
+        selected_isos = [x.strip() for x in pr.country_isos_csv.split(",") if x.strip()]
+        fiscal_year = pr.fiscal_year
+        fiscal_variant = pr.fiscal_variant
+        complexity = pr.complexity
+        txn_per = pr.txn_per_cc_per_period
+        ic_pct = pr.ic_pct
+        rev = pr.include_reversals
+        closing = pr.include_closing
+        validation_profile = pr.validation_profile
+
     seed = st.number_input("Random seed", min_value=0, value=42, step=1)
 
     st.subheader("Output")
@@ -99,6 +154,10 @@ def main() -> None:
 
     if st.button("Generate", type="primary"):
         spark = _spark()
+        if preset_choice == "custom":
+            ic_val = None if use_industry_ic else float(ic_pct) / 100.0
+        else:
+            ic_val = ic_pct
         cfg = GenerationConfig(
             industry_key=industry,
             country_isos=selected_isos,
@@ -106,7 +165,7 @@ def main() -> None:
             fiscal_variant=str(fiscal_variant),
             complexity=str(complexity),
             txn_per_cc_per_period=int(txn_per),
-            ic_pct=float(ic_pct) / 100.0,
+            ic_pct=ic_val,
             include_reversals=bool(rev),
             include_closing=bool(closing),
             seed=int(seed),
@@ -115,20 +174,22 @@ def main() -> None:
         try:
             df = generate_acdoca_dataframe(spark, cfg)
             bar.progress(0.5, text="Validating…")
-            results = run_validations(df)
+            results = run_validations(df, profile=validation_profile)
             fails = blocking_failures(results)
             bar.progress(0.75, text="Writing…")
+            meta_industry = canonical_industry_key(industry)
             if not fails:
                 write_acdoca_table(
                     spark,
                     df,
                     full_table_name=target,
                     gen=GenerationParams(
-                        industry=industry,
-                        complexity=complexity,
+                        industry=meta_industry,
+                        complexity=str(complexity),
                         countries_iso_csv=",".join(selected_isos),
                         fiscal_year=int(fiscal_year),
                         seed=int(seed),
+                        validation_profile=validation_profile,
                     ),
                     output_format=fmt,
                     parquet_path=parquet_path,

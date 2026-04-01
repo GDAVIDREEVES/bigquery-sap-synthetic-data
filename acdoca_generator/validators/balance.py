@@ -51,6 +51,16 @@ def _pk_unique(df: DataFrame) -> ValidationResult:
     )
 
 
+def _pk_unique_skipped() -> ValidationResult:
+    return ValidationResult(
+        "PK_UNIQUE",
+        True,
+        "FAIL",
+        "skipped (fast validation profile — not a guarantee of uniqueness)",
+        {"skipped": True},
+    )
+
+
 def _drcrk_sign(df: DataFrame) -> ValidationResult:
     bad = df.filter(
         ((F.col("DRCRK") == "S") & (F.col("WSL") <= 0))
@@ -124,10 +134,12 @@ def _prctr_assigned(df: DataFrame) -> ValidationResult:
     return ValidationResult("PRCTR_ASSIGNED", ok, "WARN", f"missing_prctr_pnl={bad}", {})
 
 
-def run_validations(df: DataFrame) -> List[ValidationResult]:
+def run_validations(df: DataFrame, *, profile: str = "strict") -> List[ValidationResult]:
+    prof = (profile or "strict").strip().lower()
+    pk = _pk_unique_skipped() if prof == "fast" else _pk_unique(df)
     return [
         _doc_balance(df),
-        _pk_unique(df),
+        pk,
         _drcrk_sign(df),
         _period_valid(df),
         _ic_pair(df),

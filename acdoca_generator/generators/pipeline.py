@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -11,6 +11,7 @@ from pyspark.sql.types import DecimalType
 from pyspark.sql.window import Window
 
 from acdoca_generator.config.field_tiers import excluded_sql_names, fields_for_complexity
+from acdoca_generator.config.industries import get_industry
 from acdoca_generator.generators.amounts import fx_multiplier
 from acdoca_generator.generators.closing import closing_balanced_documents
 from acdoca_generator.generators.intercompany import ic_paired_documents
@@ -27,11 +28,11 @@ class GenerationConfig:
     fiscal_variant: str  # "calendar" | "april"
     complexity: str
     txn_per_cc_per_period: int
-    ic_pct: float
     include_reversals: bool
     include_closing: bool
     seed: int
     group_currency: str = "USD"
+    ic_pct: Optional[float] = None  # None → industry template ic_share_default
 
 
 def _companies_indexed_with_fx(
@@ -119,13 +120,16 @@ def _fill_tier_defaults(df: DataFrame, complexity: str) -> DataFrame:
 
 def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> DataFrame:
     schema = acdoca_schema()
-    companies = build_companies(spark, cfg.country_isos, cfg.seed)
+    industry = get_industry(cfg.industry_key)
+    ic_share = cfg.ic_pct if cfg.ic_pct is not None else industry.ic_share_default
+
+    companies = build_companies(spark, cfg.country_isos, cfg.industry_key, cfg.seed)
     cidx = _companies_indexed_with_fx(spark, companies, cfg.group_currency, cfg.seed)
 
     n_comp = len(cfg.country_isos)
     total_lines = max(0, n_comp * 12 * cfg.txn_per_cc_per_period)
     total_lines = (total_lines // 2) * 2
-    ic_lines = int(round(total_lines * cfg.ic_pct / 4.0)) * 4
+    ic_lines = int(round(total_lines * ic_share / 4.0)) * 4
     if n_comp < 2:
         ic_lines = 0
     ic_lines = min(ic_lines, total_lines)
@@ -146,6 +150,7 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Dat
             cfg.seed,
             cfg.group_currency,
             cfg.include_reversals,
+            industry,
         )
         if dom is not None:
             acc = acc.unionByName(_align_to_schema(dom), allowMissingColumns=True)

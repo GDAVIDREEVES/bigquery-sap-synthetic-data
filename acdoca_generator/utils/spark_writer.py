@@ -9,6 +9,15 @@ from typing import Dict, Optional
 from pyspark.sql import DataFrame, SparkSession
 
 
+def _package_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("acdoca-generator")
+    except Exception:
+        return "1.0.0"
+
+
 @dataclass
 class GenerationParams:
     """Metadata persisted as Delta TBLPROPERTIES (SPEC §9.3)."""
@@ -18,7 +27,8 @@ class GenerationParams:
     countries_iso_csv: str
     fiscal_year: int
     seed: int
-    version: str = "1.0"
+    version: str = ""
+    validation_profile: str = ""
 
 
 def _escape_prop(v: str) -> str:
@@ -35,8 +45,9 @@ def write_acdoca_table(
     parquet_path: Optional[str] = None,
 ) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ver = (gen.version or "").strip() or _package_version()
     props: Dict[str, str] = {
-        "generator.version": gen.version,
+        "generator.version": ver,
         "generator.industry": gen.industry,
         "generator.complexity": gen.complexity,
         "generator.countries": gen.countries_iso_csv,
@@ -44,6 +55,9 @@ def write_acdoca_table(
         "generator.seed": str(gen.seed),
         "generator.timestamp": ts,
     }
+    vp = (gen.validation_profile or "").strip()
+    if vp:
+        props["generator.validation_profile"] = vp
     fmt = (output_format or "delta").lower()
     if fmt == "delta":
         (

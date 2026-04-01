@@ -118,11 +118,22 @@ INDUSTRIES: dict[str, IndustryTemplate] = {
     ),
 }
 
+# Backward-compatible names (docs/jobs may still pass legacy keys).
+INDUSTRY_ALIASES: dict[str, str] = {
+    "consumer_products": "consumer_goods",
+}
+
+
+def canonical_industry_key(key: str) -> str:
+    k = (key or "").strip()
+    return INDUSTRY_ALIASES.get(k, k)
+
 
 def get_industry(key: str) -> IndustryTemplate:
-    if key not in INDUSTRIES:
+    ck = canonical_industry_key(key)
+    if ck not in INDUSTRIES:
         raise KeyError(key)
-    return INDUSTRIES[key]
+    return INDUSTRIES[ck]
 
 
 def industry_keys() -> list[str]:
