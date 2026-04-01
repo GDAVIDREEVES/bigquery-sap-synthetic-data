@@ -50,6 +50,45 @@ pip install -e ".[dev]"
 pytest
 ```
 
+## Databricks (recommended)
+
+This repo includes Databricks-ready notebooks and an optional Databricks Asset Bundle job definition.
+
+### 1) Create the Unity Catalog schema
+
+Run:
+
+- `notebooks/00_uc_setup.sql`
+
+It creates `synthetic` + `synthetic.acdoca` (adjust to your naming / permissions model).
+
+### 2) Run the generator notebook
+
+Run:
+
+- `notebooks/01_generate_acdoca.py`
+
+It takes parameters via `dbutils.widgets` (or Job “base parameters”):
+
+- `industry_key` (default `consumer_products`)
+- `country_isos_csv` (default `US,DE,GB`)
+- `fiscal_year` (default `2026`)
+- `fiscal_variant` (`calendar` or `april`)
+- `complexity` (`light|medium|high|very_high`)
+- `txn_per_cc_per_period` (default `1000`)
+- `ic_pct` (default `0.25` as a fraction \(0..1\))
+- `include_reversals` / `include_closing` (`true|false`)
+- `seed` (default `42`)
+- `full_table_name` (default `synthetic.acdoca.journal_entries`)
+- `output_format` (`delta|parquet`) and optional `parquet_path`
+
+### 3) Optional: deploy as a job with a Databricks Asset Bundle
+
+This repo includes `databricks.yml` with a sample job. To use it:
+
+- Set `DATABRICKS_HOST` and `DATABRICKS_NODE_TYPE_ID`
+- Use the Databricks CLI bundle workflow (e.g. `databricks bundle deploy`, `databricks bundle run`)
+
 ## Streamlit
 
 ```bash

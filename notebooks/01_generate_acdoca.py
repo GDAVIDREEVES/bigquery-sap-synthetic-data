@@ -1,0 +1,138 @@
+#!/usr/bin/env python
+# Databricks notebook source
+
+# COMMAND ----------
+# If running from Databricks Repos, install the package in editable mode.
+# If you installed a wheel as a cluster library, you can remove this cell.
+#
+# %pip install -e /Workspace/Repos/<org>/<repo>/databricks-sap-synthetic-data
+# dbutils.library.restartPython()
+
+# COMMAND ----------
+from __future__ import annotations
+
+from dataclasses import asdict
+
+from pyspark.sql import functions as F
+
+from acdoca_generator.generators.pipeline import GenerationConfig, generate_acdoca_dataframe
+from acdoca_generator.utils.spark_writer import GenerationParams, write_acdoca_table
+from acdoca_generator.validators.balance import blocking_failures, run_validations
+
+
+def _get_param(name: str, default: str) -> str:
+    try:
+        dbutils.widgets.text(name, default)  # type: ignore[name-defined]
+        return dbutils.widgets.get(name)  # type: ignore[name-defined]
+    except Exception:
+        return default
+
+
+def _get_param_int(name: str, default: int) -> int:
+    v = _get_param(name, str(default))
+    return int(v)
+
+
+def _get_param_float(name: str, default: float) -> float:
+    v = _get_param(name, str(default))
+    return float(v)
+
+
+def _get_param_bool(name: str, default: bool) -> bool:
+    v = _get_param(name, "true" if default else "false").strip().lower()
+    return v in {"1", "true", "t", "yes", "y"}
+
+
+def _csv_list(v: str) -> list[str]:
+    items = [x.strip() for x in (v or "").split(",")]
+    return [x for x in items if x]
+
+
+# COMMAND ----------
+# Parameters (widgets in notebook UI; job parameters can override).
+industry_key = _get_param("industry_key", "consumer_products")
+country_isos_csv = _get_param("country_isos_csv", "US,DE,GB")
+fiscal_year = _get_param_int("fiscal_year", 2026)
+fiscal_variant = _get_param("fiscal_variant", "calendar")  # calendar | april
+complexity = _get_param("complexity", "light")  # light | medium | high | very_high
+
+txn_per_cc_per_period = _get_param_int("txn_per_cc_per_period", 1000)
+ic_pct = _get_param_float("ic_pct", 0.25)  # 0..1
+include_reversals = _get_param_bool("include_reversals", True)
+include_closing = _get_param_bool("include_closing", True)
+seed = _get_param_int("seed", 42)
+
+full_table_name = _get_param("full_table_name", "synthetic.acdoca.journal_entries")
+output_format = _get_param("output_format", "delta")  # delta | parquet
+parquet_path = _get_param("parquet_path", "/tmp/acdoca_synthetic")
+
+country_isos = _csv_list(country_isos_csv)
+
+
+# COMMAND ----------
+cfg = GenerationConfig(
+    industry_key=industry_key,
+    country_isos=country_isos,
+    fiscal_year=int(fiscal_year),
+    fiscal_variant=str(fiscal_variant),
+    complexity=str(complexity),
+    txn_per_cc_per_period=int(txn_per_cc_per_period),
+    ic_pct=float(ic_pct),
+    include_reversals=bool(include_reversals),
+    include_closing=bool(include_closing),
+    seed=int(seed),
+)
+
+print("GenerationConfig:")
+print(asdict(cfg))
+
+
+# COMMAND ----------
+df = generate_acdoca_dataframe(spark, cfg)  # type: ignore[name-defined]
+
+
+# COMMAND ----------
+results = run_validations(df)
+fails = blocking_failures(results)
+
+print("Validation results:")
+for r in results:
+    print(f"- {r.name}: {r.display_severity} ({'PASS' if r.passed else 'FAIL'}) — {r.detail}")
+
+if fails:
+    raise RuntimeError("Blocking validation failures; write skipped.")
+
+
+# COMMAND ----------
+write_acdoca_table(
+    spark,  # type: ignore[name-defined]
+    df,
+    full_table_name=full_table_name,
+    gen=GenerationParams(
+        industry=industry_key,
+        complexity=complexity,
+        countries_iso_csv=",".join(country_isos),
+        fiscal_year=int(fiscal_year),
+        seed=int(seed),
+    ),
+    output_format=output_format,
+    parquet_path=parquet_path,
+)
+
+print(f"Write complete ({output_format}). Target: {full_table_name if output_format.lower() == 'delta' else parquet_path}")
+
+
+# COMMAND ----------
+# Quick smoke metrics
+total_rows = df.count()
+by_cc = df.groupBy("RBUKRS").count().orderBy("RBUKRS")
+
+print(f"Total rows: {total_rows:,}")
+display(by_cc)  # type: ignore[name-defined]
+
+deb = df.filter(df.DRCRK == "S").select(F.sum("WSL")).collect()[0][0]
+cred = df.filter(df.DRCRK == "H").select(F.sum("WSL")).collect()[0][0]
+deb = float(deb or 0)
+cred = float(cred or 0)
+print(f"Sum WSL debits (S): {deb} / credits (H): {cred} (should net to ~0)")
+

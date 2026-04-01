@@ -1,0 +1,41 @@
+bundle:
+  name: acdoca-synthetic-generator
+
+workspace:
+  host: ${DATABRICKS_HOST}
+
+artifacts:
+  default:
+    type: whl
+    path: .
+
+resources:
+  jobs:
+    generate_acdoca:
+      name: acdoca-generate
+      tasks:
+        - task_key: generate
+          new_cluster:
+            spark_version: "14.3.x-scala2.12"
+            node_type_id: ${DATABRICKS_NODE_TYPE_ID}
+            num_workers: 0
+            custom_tags:
+              app: acdoca-synthetic-generator
+          libraries:
+            - whl: ${artifacts.default}
+          notebook_task:
+            notebook_path: ${workspace.root_path}/files/notebooks/01_generate_acdoca
+            base_parameters:
+              industry_key: "consumer_products"
+              country_isos_csv: "US,DE,GB"
+              fiscal_year: "2026"
+              fiscal_variant: "calendar"
+              complexity: "light"
+              txn_per_cc_per_period: "1000"
+              ic_pct: "0.25"
+              include_reversals: "true"
+              include_closing: "true"
+              seed: "42"
+              full_table_name: "synthetic.acdoca.journal_entries"
+              output_format: "delta"
+
