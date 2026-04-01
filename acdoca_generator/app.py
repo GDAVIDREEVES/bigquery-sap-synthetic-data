@@ -25,6 +25,15 @@ from acdoca_generator.validators.balance import blocking_failures, run_validatio
 
 
 def _spark() -> SparkSession:
+    import os
+
+    if os.getenv("DATABRICKS_HOST"):
+        try:
+            from databricks.connect import DatabricksSession
+
+            return DatabricksSession.builder.getOrCreate()
+        except ImportError:
+            pass
     return SparkSession.builder.appName("ACDOCA_Synthetic_Generator").getOrCreate()
 
 

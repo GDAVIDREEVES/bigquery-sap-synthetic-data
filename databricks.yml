@@ -1,13 +1,15 @@
 bundle:
   name: acdoca-synthetic-generator
 
-workspace:
-  host: ${DATABRICKS_HOST}
+# Note: Asset Bundles require a paid Databricks workspace (Standard/Premium/Enterprise).
+# On Community Edition, upload the wheel and notebooks manually via the UI.
+# See notebooks/02_run_streamlit.py for Community Edition Streamlit deployment.
 
 artifacts:
   default:
     type: whl
     path: .
+    build: python3.12 -m pip wheel --no-deps -w dist .
 
 resources:
   jobs:
@@ -25,7 +27,7 @@ resources:
             custom_tags:
               app: acdoca-synthetic-generator
           libraries:
-            - whl: ${artifacts.default}
+            - whl: ./dist/*.whl
           notebook_task:
             notebook_path: ${workspace.root_path}/files/notebooks/01_generate_acdoca
             base_parameters:
@@ -43,4 +45,3 @@ resources:
               seed: "42"
               full_table_name: "synthetic.acdoca.journal_entries"
               output_format: "delta"
-
