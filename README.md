@@ -21,6 +21,9 @@ Design and column coverage follow [SPEC-ACDOCA-Synthetic-Generator.md](SPEC-ACDO
 | `acdoca_generator/generators/` | Pipeline, master data, transactions, intercompany, amounts, closing, document |
 | `acdoca_generator/validators/` | Balance and consistency checks |
 | `acdoca_generator/utils/` | Spark schema and Delta writer |
+| `notebooks/` | Databricks SQL + Python notebooks (UC setup, parameterized generation) |
+| `databricks.yml` | Optional Databricks Asset Bundle (sample job) |
+| `scripts/complete_github_ssh.sh` | After registering your SSH key on GitHub, run to verify `ssh` and push `main` |
 
 ## Requirements
 
@@ -96,6 +99,16 @@ streamlit run acdoca_generator/app.py
 ```
 
 Point the app at a Spark session with access to your catalog for Delta writes; see `acdoca_generator/utils/spark_writer.py` for write paths and options.
+
+## Git and GitHub (SSH)
+
+This repo uses an SSH remote (`git@github.com:...`). On macOS, generate a key (`ssh-keygen -t ed25519`), add `~/.ssh/id_ed25519.pub` under **GitHub → Settings → SSH and GPG keys**, then confirm with `ssh -T git@github.com`.
+
+Cursor uses your system Git and `~/.ssh` (same as Terminal). After SSH works, you can push from Cursor or run:
+
+```bash
+./scripts/complete_github_ssh.sh
+```
 
 ## License
 
