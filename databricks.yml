@@ -1,6 +1,7 @@
 bundle:
   name: acdoca-synthetic-generator
 
+# For Google BigQuery output (same generator), see README "Google BigQuery" and scripts/run_generate_bq.py.
 # Note: Asset Bundles require a paid Databricks workspace (Standard/Premium/Enterprise).
 # On Community Edition, upload the wheel and notebooks manually via the UI.
 # See notebooks/02_run_streamlit.py for Community Edition Streamlit deployment.

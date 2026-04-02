@@ -1,6 +1,6 @@
 # ACDOCA Synthetic Data Generator
 
-Synthetic SAP S/4HANA **ACDOCA** (Universal Journal) data for **Databricks** (Unity Catalog, Delta Lake) and local Spark. Use it for transfer-pricing analysis, intercompany testing, financial supply-chain modeling, Pillar Two / GloBE demos, and ML pipelines without production SAP extracts.
+Synthetic SAP S/4HANA **ACDOCA** (Universal Journal) data for **Databricks** (Unity Catalog, Delta Lake), **Google BigQuery** (via the Spark BigQuery connector), and local Spark. Use it for transfer-pricing analysis, intercompany testing, financial supply-chain modeling, Pillar Two / GloBE demos, and ML pipelines without production SAP extracts.
 
 Design and column coverage follow [SPEC-ACDOCA-Synthetic-Generator.md](SPEC-ACDOCA-Synthetic-Generator.md).
 
@@ -12,6 +12,7 @@ Design and column coverage follow [SPEC-ACDOCA-Synthetic-Generator.md](SPEC-ACDO
 - **Spark generators**: master data, domestic transactions, intercompany pairs, amounts/currency, closing patterns, document numbering.
 - **Validators**: debit/credit balance and IC reconciliation checks (full PK uniqueness scan optional).
 - **Delta writer** with schema enforcement for catalog-backed tables; `generator.version` is filled from the installed **package version** when not set explicitly.
+- **BigQuery writer** (Spark connector): time partitioning on `BUDAT` (MONTH), clustering on `RBUKRS`, `GJAHR`, `POPER`; generator metadata as **table labels** (`bigQueryTableLabel.*`).
 
 ## Project layout
 
@@ -21,8 +22,9 @@ Design and column coverage follow [SPEC-ACDOCA-Synthetic-Generator.md](SPEC-ACDO
 | `acdoca_generator/config/` | Industries, presets, countries, chart of accounts, field tiers, operating models |
 | `acdoca_generator/generators/` | Pipeline, master data, transactions, intercompany, amounts, closing, document |
 | `acdoca_generator/validators/` | Balance and consistency checks |
-| `acdoca_generator/utils/` | Spark schema and Delta writer |
-| `notebooks/` | Databricks SQL + Python notebooks (UC setup, parameterized generation) |
+| `acdoca_generator/utils/` | Spark schema and Delta / Parquet / BigQuery writer |
+| `notebooks/` | Databricks + BigQuery setup SQL and parameterized generation notebooks |
+| `scripts/run_generate_bq.py` | CLI: generate and write to BigQuery (Spark + connector) |
 | `databricks.yml` | Optional Databricks Asset Bundle (sample job) |
 | `.github/workflows/ci.yml` | GitHub Actions: JDK 17 + pytest |
 | `scripts/complete_github_ssh.sh` | After registering your SSH key on GitHub, run to verify `ssh` and push `main` |
@@ -32,7 +34,7 @@ Design and column coverage follow [SPEC-ACDOCA-Synthetic-Generator.md](SPEC-ACDO
 - Python **3.10+**
 - **PySpark** 3.5.x (Spark 3.5 compatible)
 - **Java** (for local Spark tests and generation)
-- For production-style runs: a Spark session that can write to your **Unity Catalog** Delta tables (e.g. Databricks cluster / DBR). Local `pytest` uses Spark in `local[2]` mode when Java is available.
+- For production-style runs: a Spark session that can write to **Unity Catalog** Delta tables (e.g. Databricks cluster / DBR), or **BigQuery** using the Spark BigQuery connector plus a **GCS bucket** for staging. Local `pytest` uses Spark in `local[2]` mode when Java is available.
 
 ## Install
 
@@ -112,13 +114,66 @@ The sample job cluster uses **Photon** (`runtime_engine: PHOTON`) and **autoscal
 
 Optional: attach a **cluster policy** in the Databricks UI or extend the bundle with a non-empty `policy_id` on `new_cluster` if your organization standardizes node types and Spark config that way.
 
+## Google BigQuery (PySpark + connector)
+
+Generation logic is unchanged; output goes to BigQuery using the [Spark BigQuery connector](https://github.com/GoogleCloudDataproc/spark-bigquery-connector) (default Maven coordinate: `com.google.cloud.spark:spark-3.5-bigquery:0.44.1`, overridable with `ACDOCA_SPARK_BQ_PACKAGE`).
+
+### Prerequisites
+
+- GCP project with **BigQuery** and **Cloud Storage** enabled.
+- A **GCS bucket** used only (or shared) for connector temporary files during load (`temporaryGcsBucket`).
+- **Credentials**: workload identity on Dataproc, or `GOOGLE_APPLICATION_CREDENTIALS` for local runs.
+- **IAM**: the Spark driver’s identity (e.g. Dataproc cluster service account) needs roles such as **BigQuery Data Editor** on the target dataset (or project) and **Storage Object Admin** (or create/use) on the staging bucket.
+
+### 1) Create the BigQuery dataset
+
+Edit and run:
+
+- [`notebooks/00_bq_setup.sql`](notebooks/00_bq_setup.sql)
+
+Replace `MY_PROJECT` with your project id. The first write can also **create** the table (`CREATE_IF_NEEDED`); the writer sets **partitioning** (field `BUDAT`, type **MONTH**) and **clustering** (`RBUKRS`, `GJAHR`, `POPER`).
+
+### 2) Run from the CLI (any Spark 3.5 + connector)
+
+From the repo root, with Python 3.10+ and a JDK:
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json   # if not on GCP with default ADC
+export ACDOCA_GCS_TEMP_BUCKET=your-staging-bucket
+python scripts/run_generate_bq.py \
+  --full-table-name YOUR_PROJECT.synthetic_acdoca.journal_entries \
+  --preset quick_smoke
+```
+
+Use `--help` for all flags. Parameters match the Databricks notebook semantics (see table below). Override the connector package with `ACDOCA_SPARK_BQ_PACKAGE` if your Spark version differs.
+
+### 3) Notebook on Dataproc / Vertex Workbench
+
+- [`notebooks/01_generate_acdoca_bq.py`](notebooks/01_generate_acdoca_bq.py) mirrors [`notebooks/01_generate_acdoca.py`](notebooks/01_generate_acdoca.py) but writes with `output_format=bigquery`. Ensure the cluster or session has the Spark BigQuery connector JAR (e.g. Dataproc image that supports `spark-3.5-bigquery`, or `spark.jars.packages` as in `scripts/run_generate_bq.py`).
+- Widgets / parameters: same as Databricks, plus:
+  - `full_table_name`: **`project.dataset.table`** (not Unity Catalog).
+  - `gcs_temp_bucket`: staging bucket name, or rely on `ACDOCA_GCS_TEMP_BUCKET`.
+
+### Parameter parity (Databricks vs BigQuery)
+
+| Parameter | Databricks notebook | BigQuery notebook / CLI |
+|-----------|---------------------|-------------------------|
+| `preset`, `validation_profile`, `industry_key`, `country_isos_csv`, `fiscal_year`, `fiscal_variant`, `complexity`, `txn_per_cc_per_period`, `ic_pct`, `include_reversals`, `include_closing`, `seed` | same | same (CLI: `--ic-pct`, `--country-isos`, etc.) |
+| `full_table_name` | `catalog.schema.table` | `project.dataset.table` |
+| `output_format` | `delta` / `parquet` | N/A (always BigQuery in BQ entrypoints) |
+| `gcs_temp_bucket` | — | Required (widget, `ACDOCA_GCS_TEMP_BUCKET`, or `--gcs-temp-bucket`) |
+
+### Dataproc / `spark-submit`
+
+`scripts/run_generate_bq.py` configures `spark.jars.packages` for a local `SparkSession`. On **Dataproc**, you can instead submit it as a **PySpark** job: install this package on the cluster (initialization action or custom image with `pip install`), attach the BigQuery connector (e.g. `gs://spark-lib/bigquery/spark-3.5-bigquery-0.44.1.jar` or equivalent `--packages` on `spark-submit`), and pass the same CLI arguments after `--`. If you use plain `spark-submit` with `--packages com.google.cloud.spark:spark-3.5-bigquery:0.44.1`, ensure driver and executors can import `acdoca_generator` (zip the repo with `pip wheel` / `venv` layout as your platform requires).
+
 ## Streamlit
 
 ```bash
 streamlit run acdoca_generator/app.py
 ```
 
-Point the app at a Spark session with access to your catalog for Delta writes; see `acdoca_generator/utils/spark_writer.py` for write paths and options.
+Choose **delta**, **parquet**, or **bigquery** in the UI. For BigQuery, provide **`project.dataset.table`** and a **GCS staging bucket**; the app restarts the local Spark session with `spark.jars.packages` set to load the BigQuery connector (not used when `DATABRICKS_HOST` is set—install the connector on the Databricks cluster instead). Optional env defaults: `ACDOCA_BQ_TABLE`, `ACDOCA_GCS_TEMP_BUCKET`, `ACDOCA_SPARK_BQ_PACKAGE`. See [`acdoca_generator/utils/spark_writer.py`](acdoca_generator/utils/spark_writer.py) for write paths and options.
 
 ## Git and GitHub (SSH)
 

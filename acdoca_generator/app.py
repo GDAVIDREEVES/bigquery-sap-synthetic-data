@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -23,17 +24,30 @@ from acdoca_generator.utils.schema import acdoca_schema
 from acdoca_generator.utils.spark_writer import GenerationParams, write_acdoca_table
 from acdoca_generator.validators.balance import blocking_failures, run_validations
 
+_SPARK_BQ_PACKAGE = os.environ.get(
+    "ACDOCA_SPARK_BQ_PACKAGE",
+    "com.google.cloud.spark:spark-3.5-bigquery:0.44.1",
+)
 
-def _spark() -> SparkSession:
-    import os
 
+def _spark(*, for_bigquery: bool = False) -> SparkSession:
     if os.getenv("DATABRICKS_HOST"):
         try:
             from databricks.connect import DatabricksSession
 
+            # BigQuery writes from Databricks need the Spark BigQuery connector on the cluster.
             return DatabricksSession.builder.getOrCreate()
         except ImportError:
             pass
+    if for_bigquery:
+        active = SparkSession.getActiveSession()
+        if active is not None:
+            active.stop()
+        return (
+            SparkSession.builder.appName("ACDOCA_Synthetic_Generator_BQ")
+            .config("spark.jars.packages", _SPARK_BQ_PACKAGE)
+            .getOrCreate()
+        )
     return SparkSession.builder.appName("ACDOCA_Synthetic_Generator").getOrCreate()
 
 
@@ -155,14 +169,27 @@ def main() -> None:
     seed = st.number_input("Random seed", min_value=0, value=42, step=1)
 
     st.subheader("Output")
-    target = st.text_input("Target catalog.schema.table", value="synthetic.acdoca.journal_entries")
-    fmt = st.radio("Format", options=["delta", "parquet"], horizontal=True)
-    parquet_path = None
-    if fmt == "parquet":
-        parquet_path = st.text_input("Parquet path (DBFS or UC volume)", value="/tmp/acdoca_synthetic")
+    fmt = st.radio("Format", options=["delta", "parquet", "bigquery"], horizontal=True)
+    if fmt == "bigquery":
+        target = st.text_input(
+            "BigQuery table (project.dataset.table)",
+            value=os.environ.get("ACDOCA_BQ_TABLE", "my-gcp-project.synthetic_acdoca.journal_entries"),
+        )
+        gcs_temp_bucket = st.text_input(
+            "GCS staging bucket (connector temp files)",
+            value=os.environ.get("ACDOCA_GCS_TEMP_BUCKET", ""),
+            help="Required for BigQuery writes. Same as ACDOCA_GCS_TEMP_BUCKET.",
+        )
+        parquet_path = None
+    else:
+        target = st.text_input("Target catalog.schema.table", value="synthetic.acdoca.journal_entries")
+        parquet_path = None
+        if fmt == "parquet":
+            parquet_path = st.text_input("Parquet path (DBFS or UC volume)", value="/tmp/acdoca_synthetic")
+        gcs_temp_bucket = None
 
     if st.button("Generate", type="primary"):
-        spark = _spark()
+        spark = _spark(for_bigquery=(fmt == "bigquery"))
         if preset_choice == "custom":
             ic_val = None if use_industry_ic else float(ic_pct) / 100.0
         else:
@@ -202,6 +229,7 @@ def main() -> None:
                     ),
                     output_format=fmt,
                     parquet_path=parquet_path,
+                    gcs_temp_bucket=gcs_temp_bucket,
                 )
             bar.progress(1.0, text="Done")
         except Exception as e:
@@ -215,7 +243,12 @@ def main() -> None:
         if fails:
             st.error("Write skipped: blocking validation failures (FAIL).")
         else:
-            st.success(f"Written to **{target}**" if fmt == "delta" else f"Parquet written to **{parquet_path}**")
+            if fmt == "delta":
+                st.success(f"Written to **{target}**")
+            elif fmt == "parquet":
+                st.success(f"Parquet written to **{parquet_path}**")
+            else:
+                st.success(f"BigQuery write complete: **{target}**")
 
         st.subheader("Summary")
         total = df.count()
