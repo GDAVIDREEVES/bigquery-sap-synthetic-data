@@ -1,0 +1,5 @@
+# Optional: financial supply chain Dash viewer
+dash>=2.14.0
+plotly>=5.18.0
+dash-cytoscape>=1.0.0
+pandas>=2.0.0

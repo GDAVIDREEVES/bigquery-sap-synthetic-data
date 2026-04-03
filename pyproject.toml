@@ -15,6 +15,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0.0"]
+viz = [
+  "dash>=2.14.0",
+  "plotly>=5.18.0",
+  "dash-cytoscape>=1.0.0",
+  "pandas>=2.0.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["acdoca_generator*"]

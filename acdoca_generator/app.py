@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 # Repo root on path when running `streamlit run acdoca_generator/app.py`
@@ -19,7 +20,11 @@ from acdoca_generator.config.countries import COUNTRIES
 from acdoca_generator.config.field_tiers import COMPLEXITY_LEVELS, fields_for_complexity
 from acdoca_generator.config.industries import canonical_industry_key, industry_keys
 from acdoca_generator.config.presets import DEMO_PRESETS, preset_keys
-from acdoca_generator.generators.pipeline import GenerationConfig, generate_acdoca_dataframe
+from acdoca_generator.generators.pipeline import (
+    GenerationConfig,
+    export_supply_chain_json,
+    generate_acdoca_dataframe,
+)
 from acdoca_generator.utils.schema import acdoca_schema
 from acdoca_generator.utils.spark_writer import GenerationParams, write_acdoca_table
 from acdoca_generator.validators.balance import blocking_failures, run_validations
@@ -81,6 +86,8 @@ def main() -> None:
     rev = None
     closing = None
     validation_profile = "strict"
+    include_supply_chain = False
+    sc_chains_per_period = 50
 
     if preset_choice == "custom":
         st.subheader("Industry template")
@@ -140,6 +147,18 @@ def main() -> None:
         ic_pct = st.slider("Intercompany % of lines", 5, 60, 25, disabled=use_industry_ic)
         rev = st.checkbox("Include reversals (~5% flagged)", value=True)
         closing = st.checkbox("Include closing entries", value=True)
+        include_supply_chain = st.checkbox(
+            "Include financial supply chain (multi-hop IC + flow table)",
+            value=False,
+            help="Adds synthetic supply-chain hops and paired IC lines. Export JSON for the Dash viewer.",
+        )
+        sc_chains_per_period = st.slider(
+            "Supply chain flows to generate",
+            min_value=1,
+            max_value=500,
+            value=50,
+            disabled=not include_supply_chain,
+        )
 
         st.subheader("Validation")
         validation_profile = st.radio(
@@ -165,6 +184,8 @@ def main() -> None:
         rev = pr.include_reversals
         closing = pr.include_closing
         validation_profile = pr.validation_profile
+        include_supply_chain = bool(pr.include_supply_chain)
+        sc_chains_per_period = int(pr.sc_chains_per_period)
 
     seed = st.number_input("Random seed", min_value=0, value=42, step=1)
 
@@ -205,10 +226,13 @@ def main() -> None:
             include_reversals=bool(rev),
             include_closing=bool(closing),
             seed=int(seed),
+            include_supply_chain=bool(include_supply_chain),
+            sc_chains_per_period=int(sc_chains_per_period),
         )
         bar = st.progress(0.0, text="Generating…")
         try:
-            df = generate_acdoca_dataframe(spark, cfg)
+            gen_result = generate_acdoca_dataframe(spark, cfg)
+            df = gen_result.acdoca_df
             bar.progress(0.5, text="Validating…")
             results = run_validations(df, profile=validation_profile)
             fails = blocking_failures(results)
@@ -274,6 +298,26 @@ def main() -> None:
 
         st.subheader("Sample (100 rows)")
         st.dataframe(df.limit(100).toPandas(), use_container_width=True)
+
+        if gen_result.supply_chain_flows_df is not None:
+            st.subheader("Supply chain flows (hops)")
+            sc_df = gen_result.supply_chain_flows_df
+            n_sc = sc_df.count()
+            st.metric("Supply chain hop rows", f"{n_sc:,}")
+            st.dataframe(sc_df.limit(200).toPandas(), use_container_width=True)
+            try:
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix="_sc_flows.json")
+                tmp.close()
+                export_supply_chain_json(sc_df, tmp.name)
+                st.info(
+                    "Open the **Dash** graph in a **separate terminal** (install `pip install -e \".[viz]\"`), "
+                    "leave it running, then open the URL:\n\n"
+                    f"`python -m acdoca_generator.dash_app.app --data {tmp.name}`\n\n"
+                    "**http://127.0.0.1:8050/** — Error **-102 / connection refused** means nothing is listening: "
+                    "the server must stay running in that terminal (or **--port 8051** if 8050 is in use)."
+                )
+            except Exception as ex:  # noqa: BLE001
+                st.warning(f"Could not export supply chain JSON: {ex}")
 
 
 if __name__ == "__main__":

@@ -21,11 +21,11 @@ def test_industry_changes_domestic_gl_mix(spark: SparkSession):
     df_tech = generate_acdoca_dataframe(
         spark,
         GenerationConfig(industry_key="technology", **base_kw),
-    )
+    ).acdoca_df
     df_cpg = generate_acdoca_dataframe(
         spark,
         GenerationConfig(industry_key="consumer_goods", **base_kw),
-    )
+    ).acdoca_df
     rd = SAMPLE_GL["opex_rd"]
     n_tech = df_tech.filter(F.col("RACCT") == F.lit(rd)).count()
     n_cpg = df_cpg.filter(F.col("RACCT") == F.lit(rd)).count()

@@ -17,7 +17,7 @@ def test_doc_balance_and_pk(spark: SparkSession):
         include_closing=False,
         seed=7,
     )
-    df = generate_acdoca_dataframe(spark, cfg)
+    df = generate_acdoca_dataframe(spark, cfg).acdoca_df
     results = run_validations(df)
     by_name = {r.name: r for r in results}
     assert by_name["DOC_BALANCE"].passed, by_name["DOC_BALANCE"].detail

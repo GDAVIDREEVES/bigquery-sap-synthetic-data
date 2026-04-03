@@ -29,8 +29,8 @@ def test_ic_pct_none_uses_industry_default(spark: SparkSession):
         include_closing=False,
         seed=99,
     )
-    d_t = generate_acdoca_dataframe(spark, tech)
-    d_p = generate_acdoca_dataframe(spark, pharma)
+    d_t = generate_acdoca_dataframe(spark, tech).acdoca_df
+    d_p = generate_acdoca_dataframe(spark, pharma).acdoca_df
     ic_t = d_t.filter(F.col("RASSC") != "").count()
     ic_p = d_p.filter(F.col("RASSC") != "").count()
     assert ic_t > ic_p, f"technology default IC share > pharma: {ic_t} vs {ic_p}"

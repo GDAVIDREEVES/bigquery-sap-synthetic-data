@@ -17,7 +17,7 @@ def test_ic_awref_pairs_two_company_codes(spark: SparkSession):
         include_closing=False,
         seed=11,
     )
-    df = generate_acdoca_dataframe(spark, cfg)
+    df = generate_acdoca_dataframe(spark, cfg).acdoca_df
     ic = df.filter(F.col("RASSC") != "")
     if ic.limit(1).count() == 0:
         return

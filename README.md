@@ -9,6 +9,7 @@ Design and column coverage follow [SPEC-ACDOCA-Synthetic-Generator.md](SPEC-ACDO
 - **538-column schema** aligned with the spec appendix (sanitized names, e.g. `.INCLU-_PN` → `INCLU_PN`).
 - **Industry templates** drive domestic **GL mix**, **posting period seasonality**, default **intercompany share**, and optional **entity-role** hints per country.
 - **Streamlit UI** (`acdoca_generator/app.py`) with **named demo presets**, custom parameters, and **strict vs fast** validation.
+- **Financial supply chain** (optional): multi-hop flows with materials, TP method, markups, plants, and linked IC postings; preset `supply_chain_demo`. **`generate_acdoca_dataframe`** returns **`GenerationResult`** (`acdoca_df`, optional **`supply_chain_flows_df`**). **Dash + Cytoscape** viewer: `pip install -e ".[viz]"` then run **`python -m acdoca_generator.dash_app.app --data flows.json`** in a terminal and keep it open while you browse **http://127.0.0.1:8050/** (works with Dash 2 and Dash 3; see `requirements-viz.txt`).
 - **Spark generators**: master data, domestic transactions, intercompany pairs, amounts/currency, closing patterns, document numbering.
 - **Validators**: debit/credit balance and IC reconciliation checks (full PK uniqueness scan optional).
 - **Delta writer** with schema enforcement for catalog-backed tables; `generator.version` is filled from the installed **package version** when not set explicitly.
@@ -20,7 +21,9 @@ Design and column coverage follow [SPEC-ACDOCA-Synthetic-Generator.md](SPEC-ACDO
 |------|------|
 | `acdoca_generator/app.py` | Streamlit entry point |
 | `acdoca_generator/config/` | Industries, presets, countries, chart of accounts, field tiers, operating models |
-| `acdoca_generator/generators/` | Pipeline, master data, transactions, intercompany, amounts, closing, document |
+| `acdoca_generator/generators/` | Pipeline, master data, transactions, intercompany, supply chain, amounts, closing, document |
+| `acdoca_generator/dash_app/` | Optional Dash app: interactive supply-chain network graph |
+| `requirements-viz.txt` | Optional deps for the Dash viewer (`dash`, `plotly`, `dash-cytoscape`, `pandas`) |
 | `acdoca_generator/validators/` | Balance and consistency checks |
 | `acdoca_generator/utils/` | Spark schema and Delta / Parquet / BigQuery writer |
 | `notebooks/` | Databricks + BigQuery setup SQL and parameterized generation notebooks |
@@ -62,6 +65,8 @@ pytest
 **Java:** PySpark needs a JDK on the machine that runs tests. Without it, Spark-backed tests are skipped. Install **Temurin 17** (or another JDK 11+) and ensure `java -version` works; on macOS, `brew install --cask temurin@17` and set `JAVA_HOME` if needed (`/usr/libexec/java_home -v 17`).
 
 **Faster local runs:** The session-scoped Spark fixture can make a full `pytest` take several minutes. For a quick check: `pytest acdoca_generator/tests/test_industry_alias.py -v`.
+
+**Supply chain Spark test:** `test_supply_chain_generates_hops_and_sc_awref` is skipped unless you set `ACDOCA_RUN_SPARK_TESTS=1` (slow; requires Java).
 
 CI: [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on push/PR to `main` with Temurin JDK 17 and Python 3.11 (`pip install -e ".[dev]"` then `pytest`).
 

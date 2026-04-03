@@ -17,7 +17,7 @@ def test_fast_profile_skips_pk_full_scan(spark: SparkSession):
         include_closing=False,
         seed=1,
     )
-    df = generate_acdoca_dataframe(spark, cfg)
+    df = generate_acdoca_dataframe(spark, cfg).acdoca_df
     results = run_validations(df, profile="fast")
     pk = next(r for r in results if r.name == "PK_UNIQUE")
     assert pk.passed
