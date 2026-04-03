@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0.0"]
+dev = ["pytest>=7.0.0", "pytest-timeout>=2.3.0"]
 viz = [
   "dash>=2.14.0",
   "plotly>=5.18.0",
@@ -28,3 +28,4 @@ include = ["acdoca_generator*"]
 [tool.pytest.ini_options]
 testpaths = ["acdoca_generator/tests"]
 pythonpath = ["."]
+timeout = 900
