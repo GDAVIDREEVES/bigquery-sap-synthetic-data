@@ -1,4 +1,4 @@
-"""Streamlit entry point for Databricks Apps (SPEC §3)."""
+"""Streamlit entry point for local PySpark generation (SPEC §3)."""
 
 from __future__ import annotations
 
@@ -36,14 +36,6 @@ _SPARK_BQ_PACKAGE = os.environ.get(
 
 
 def _spark(*, for_bigquery: bool = False) -> SparkSession:
-    if os.getenv("DATABRICKS_HOST"):
-        try:
-            from databricks.connect import DatabricksSession
-
-            # BigQuery writes from Databricks need the Spark BigQuery connector on the cluster.
-            return DatabricksSession.builder.getOrCreate()
-        except ImportError:
-            pass
     if for_bigquery:
         active = SparkSession.getActiveSession()
         if active is not None:
@@ -203,10 +195,16 @@ def main() -> None:
         )
         parquet_path = None
     else:
-        target = st.text_input("Target catalog.schema.table", value="synthetic.acdoca.journal_entries")
+        target = st.text_input(
+            "Target table (catalog.schema.table for metastore-backed Delta)",
+            value="synthetic.acdoca.journal_entries",
+        )
         parquet_path = None
         if fmt == "parquet":
-            parquet_path = st.text_input("Parquet path (DBFS or UC volume)", value="/tmp/acdoca_synthetic")
+            parquet_path = st.text_input(
+                "Parquet path (local directory or cloud URI)",
+                value="/tmp/acdoca_synthetic",
+            )
         gcs_temp_bucket = None
 
     if st.button("Generate", type="primary"):

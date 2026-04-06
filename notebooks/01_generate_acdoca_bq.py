@@ -1,6 +1,5 @@
 #!/usr/bin/env python
-# Databricks notebook source
-# Similar to 01_generate_acdoca.py but targets BigQuery (project.dataset.table) and GCS staging.
+# PySpark notebook: generate ACDOCA and write to BigQuery (project.dataset.table) with GCS staging.
 #
 # Dataproc / Vertex Workbench: ensure the Spark BigQuery connector is on the classpath, e.g.:
 #   SparkSession.builder.config(
@@ -9,9 +8,10 @@
 #   )
 # Or use a Dataproc image that includes the connector.
 #
-# Parameters: mirror the Databricks notebook; use dbutils.widgets when available, else defaults.
+# Parameters: defaults below, or override with environment variables ACDOCA_<NAME>
+# (NAME is the widget name in UPPER_SNAKE), e.g. export ACDOCA_PRESET=quick_smoke
 
-# COMMAND ----------
+# %%
 from __future__ import annotations
 
 import os
@@ -27,11 +27,10 @@ from acdoca_generator.validators.balance import blocking_failures, run_validatio
 
 
 def _get_param(name: str, default: str) -> str:
-    try:
-        dbutils.widgets.text(name, default)  # type: ignore[name-defined]
-        return dbutils.widgets.get(name)  # type: ignore[name-defined]
-    except Exception:
-        return default
+    env_key = "ACDOCA_" + name.upper()
+    if env_key in os.environ:
+        return os.environ[env_key]
+    return default
 
 
 def _get_param_int(name: str, default: int) -> int:
@@ -49,7 +48,7 @@ def _csv_list(v: str) -> list[str]:
     return [x for x in items if x]
 
 
-# COMMAND ----------
+# %%
 preset = _get_param("preset", "custom")
 validation_profile = _get_param("validation_profile", "strict")
 
@@ -89,7 +88,7 @@ else:
 
 country_isos = _csv_list(country_isos_csv)
 
-# COMMAND ----------
+# %%
 cfg = GenerationConfig(
     industry_key=industry_key,
     country_isos=country_isos,
@@ -110,14 +109,14 @@ print(asdict(cfg))
 print(f"preset={preset!r} validation_profile={validation_profile!r}")
 print(f"full_table_name={full_table_name!r} gcs_temp_bucket={gcs_temp_bucket!r}")
 
-# COMMAND ----------
+# %%
 if not str(gcs_temp_bucket).strip():
     raise RuntimeError("Set gcs_temp_bucket widget or ACDOCA_GCS_TEMP_BUCKET for BigQuery staging.")
 
 _gen = generate_acdoca_dataframe(spark, cfg)  # type: ignore[name-defined]
 df = _gen.acdoca_df
 
-# COMMAND ----------
+# %%
 results = run_validations(df, profile=validation_profile)
 fails = blocking_failures(results)
 
@@ -128,7 +127,7 @@ for r in results:
 if fails:
     raise RuntimeError("Blocking validation failures; write skipped.")
 
-# COMMAND ----------
+# %%
 write_acdoca_table(
     spark,  # type: ignore[name-defined]
     df,
@@ -147,7 +146,7 @@ write_acdoca_table(
 
 print(f"Write complete (bigquery). Target: {full_table_name}")
 
-# COMMAND ----------
+# %%
 total_rows = df.count()
 by_cc = df.groupBy("RBUKRS").count().orderBy("RBUKRS")
 
