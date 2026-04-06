@@ -17,11 +17,13 @@ def closing_balanced_documents(
     gjahr: int,
     seed: int,
     group_currency: str,
+    *,
+    n_comp: int,
 ) -> DataFrame:
     """
     One balanced two-line document per (company, period, closing step).
+    n_comp must match len(country_isos) used to build companies_indexed.
     """
-    n_comp = int(companies_indexed.select(F.countDistinct("ci").alias("n")).collect()[0].n or 0)
     if n_comp == 0:
         return None
 

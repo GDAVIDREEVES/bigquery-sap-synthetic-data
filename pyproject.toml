@@ -14,7 +14,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0.0", "pytest-timeout>=2.3.0"]
+dev = ["pytest>=7.0.0", "pandas>=2.0.0", "setuptools>=69.0.0"]
+fast = ["polars>=1.0.0", "pandas>=2.0.0"]
 viz = [
   "dash>=2.14.0",
   "plotly>=5.18.0",
@@ -28,4 +29,6 @@ include = ["acdoca_generator*"]
 [tool.pytest.ini_options]
 testpaths = ["acdoca_generator/tests"]
 pythonpath = ["."]
-timeout = 900
+markers = [
+    "spark: needs Java and PySpark (heavy integration tests)",
+]

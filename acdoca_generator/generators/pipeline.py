@@ -8,8 +8,6 @@ from typing import List, Optional
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import DecimalType
-from pyspark.sql.window import Window
-
 from acdoca_generator.config.field_tiers import excluded_sql_names, fields_for_complexity
 from acdoca_generator.config.industries import get_industry
 from acdoca_generator.generators.amounts import fx_multiplier
@@ -50,12 +48,17 @@ class GenerationResult:
 def _companies_indexed_with_fx(
     spark: SparkSession, companies_df: DataFrame, group_currency: str, seed: int
 ) -> DataFrame:
-    w = Window.orderBy("RBUKRS")
-    idx = companies_df.withColumn("ci", F.row_number().over(w) - F.lit(1))
-    rows = idx.collect()
-    fx_rows = [(r.RBUKRS, float(fx_multiplier(r.RHCUR, group_currency, seed, 1))) for r in rows]
-    fx_df = spark.createDataFrame(fx_rows, ["RBUKRS", "FX_KSL"])
-    return idx.join(fx_df, "RBUKRS", "left")
+    # Avoid Window.orderBy-only (single-partition shuffle); companies list is tiny.
+    rows = companies_df.orderBy("RBUKRS").collect()
+    ci_df = spark.createDataFrame(
+        [(r.RBUKRS, i) for i, r in enumerate(rows)],
+        ["RBUKRS", "ci"],
+    )
+    fx_df = spark.createDataFrame(
+        [(r.RBUKRS, float(fx_multiplier(r.RHCUR, group_currency, seed, 1))) for r in rows],
+        ["RBUKRS", "FX_KSL"],
+    )
+    return companies_df.join(ci_df, "RBUKRS", "inner").join(fx_df, "RBUKRS", "left")
 
 
 def _align_to_schema(df: DataFrame) -> DataFrame:
@@ -171,6 +174,7 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Gen
             cfg.group_currency,
             cfg.include_reversals,
             industry,
+            n_comp=n_comp,
         )
         if dom is not None:
             acc = acc.unionByName(_align_to_schema(dom), allowMissingColumns=True)
@@ -183,6 +187,7 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Gen
             cfg.fiscal_year,
             cfg.seed,
             cfg.group_currency,
+            n_comp=n_comp,
         )
         if icdf is not None:
             acc = acc.unionByName(_align_to_schema(icdf), allowMissingColumns=True)
@@ -209,6 +214,7 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Gen
             cfg.fiscal_year,
             cfg.seed,
             cfg.group_currency,
+            n_comp=n_comp,
         )
         if close is not None:
             acc = acc.unionByName(_align_to_schema(close), allowMissingColumns=True)
