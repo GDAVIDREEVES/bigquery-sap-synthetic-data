@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "acdoca-generator"
 version = "1.0.0"
-description = "Synthetic SAP ACDOCA journal generator for Databricks (Delta) and Google BigQuery (Spark connector)"
+description = "Synthetic SAP ACDOCA journal generator for Google BigQuery (Spark connector), local PySpark (Delta/Parquet), and optional Polars fast path"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

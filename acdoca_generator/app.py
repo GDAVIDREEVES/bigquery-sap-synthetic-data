@@ -1,4 +1,4 @@
-"""Streamlit entry point for Databricks Apps (SPEC §3)."""
+"""Streamlit entry point for local PySpark generation (SPEC §3)."""
 
 from __future__ import annotations
 
@@ -36,14 +36,6 @@ _SPARK_BQ_PACKAGE = os.environ.get(
 
 
 def _spark(*, for_bigquery: bool = False) -> SparkSession:
-    if os.getenv("DATABRICKS_HOST"):
-        try:
-            from databricks.connect import DatabricksSession
-
-            # BigQuery writes from Databricks need the Spark BigQuery connector on the cluster.
-            return DatabricksSession.builder.getOrCreate()
-        except ImportError:
-            pass
     if for_bigquery:
         active = SparkSession.getActiveSession()
         if active is not None:

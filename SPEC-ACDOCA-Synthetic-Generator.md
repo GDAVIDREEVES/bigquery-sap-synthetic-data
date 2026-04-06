@@ -2,14 +2,14 @@
 
 **Version:** 1.0  
 **Date:** March 31, 2026  
-**Target Platform:** Databricks (Unity Catalog + Spark) with Streamlit UI  
+**Target Platform:** PySpark 3.5+, Google BigQuery (Spark connector), local Streamlit UI; optional Polars fast path  
 **Build Tool:** Claude Code  
 
 ---
 
 ## 1. Purpose
 
-Build a Databricks-native application that generates realistic synthetic SAP S/4HANA ACDOCA (Universal Journal) data. The generated data will be used for transfer pricing analysis, financial supply chain modeling, intercompany transaction testing, Pillar Two / GloBE readiness, and AI/ML demo pipelines. The generator must produce structurally valid, internally consistent journal entries that reflect real-world industry operating models and multinational entity structures.
+Build a PySpark-based application that generates realistic synthetic SAP S/4HANA ACDOCA (Universal Journal) data. The generated data will be used for transfer pricing analysis, financial supply chain modeling, intercompany transaction testing, Pillar Two / GloBE readiness, and AI/ML demo pipelines. The generator must produce structurally valid, internally consistent journal entries that reflect real-world industry operating models and multinational entity structures.
 
 ---
 
@@ -17,7 +17,7 @@ Build a Databricks-native application that generates realistic synthetic SAP S/4
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                  Streamlit UI (Databricks App)            │
+│                  Streamlit UI (local PySpark)             │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌─────────────┐ │
 │  │ Industry  │ │Countries │ │ Fiscal   │ │ Complexity  │ │
 │  │ Template  │ │ Selector │ │ Year     │ │ Tier        │ │
@@ -39,8 +39,8 @@ Build a Databricks-native application that generates realistic synthetic SAP S/4
 │              │  Checker               │                   │
 │              └───────────┬────────────┘                   │
 │                          ▼                                │
-│              Delta Table in Unity Catalog                  │
-│              (catalog.schema.acdoca_synthetic)             │
+│         Delta / Parquet (path or metastore) or BigQuery    │
+│              (project.dataset.table)                       │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -59,7 +59,7 @@ Build a Databricks-native application that generates realistic synthetic SAP S/4
 | `generators/amounts.py` | Currency & amount logic | Multi-currency translation, FX rates |
 | `generators/document.py` | Document numbering | BELNR, DOCLN, AWTYP/AWREF sequencing |
 | `validators/balance.py` | Validation suite | Debit = Credit per doc, IC reconciliation |
-| `utils/spark_writer.py` | Delta writer | Schema enforcement, Unity Catalog registration |
+| `utils/spark_writer.py` | Spark writer | Schema enforcement; Delta / Parquet / BigQuery sinks |
 
 ---
 
@@ -639,12 +639,12 @@ TBLPROPERTIES (
 
 ## 10. Implementation Notes for Claude Code
 
-### 10.1 Databricks Environment
+### 10.1 Runtime environment
 
-- Runtime: DBR 14.3 LTS+ (Python 3.10+, Spark 3.5+)
-- UI: Streamlit via `databricks-apps` or Databricks notebook with `dbutils.widgets` fallback
-- Storage: Unity Catalog (3-level namespace)
-- Compute: Single-node for <100K rows; cluster for larger volumes
+- Runtime: Python 3.10+, Spark 3.5+ (PySpark)
+- UI: Streamlit locally; optional notebook hosts with widget APIs for parameters
+- Storage: BigQuery via Spark connector + GCS staging, or Delta/Parquet to a path or metastore-backed table
+- Compute: Single-node Spark for smaller volumes; cluster (e.g. Dataproc) for larger volumes
 - No external API calls required — all generation logic is self-contained
 
 ### 10.2 Performance Targets
