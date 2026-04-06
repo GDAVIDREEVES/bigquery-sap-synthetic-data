@@ -11,6 +11,7 @@ Design and column coverage follow [SPEC-ACDOCA-Synthetic-Generator.md](SPEC-ACDO
 - **Streamlit UI** (`acdoca_generator/app.py`) with **named demo presets**, custom parameters, and **strict vs fast** validation.
 - **Financial supply chain** (optional): multi-hop flows with materials, TP method, markups, plants, and linked IC postings; preset `supply_chain_demo`. **`generate_acdoca_dataframe`** returns **`GenerationResult`** (`acdoca_df`, optional **`supply_chain_flows_df`**). **Dash + Cytoscape** viewer: `pip install -e ".[viz]"` then run **`python -m acdoca_generator.dash_app.app --data flows.json`** in a terminal and keep it open while you browse **http://127.0.0.1:8050/** (works with Dash 2 and Dash 3; see `requirements-viz.txt`).
 - **Spark generators**: master data, domestic transactions, intercompany pairs, amounts/currency, closing patterns, document numbering.
+- **Fast path (optional)**: **`acdoca_generator/core/`** implements domestic journal lines in **Polars** (no JVM) for quick generation and tests. Row-level hashes differ from Spark SQL `hash()`; use **`acdoca_generator.spark_bridge.polars_to_spark`** to materialize a Polars frame as a Spark `DataFrame` in one step when you need Spark or Delta/BQ writes. Install with **`pip install -e ".[fast]"`** (or **`.[dev,fast]`** for tests).
 - **Validators**: debit/credit balance and IC reconciliation checks (full PK uniqueness scan optional).
 - **Delta writer** with schema enforcement for catalog-backed tables; `generator.version` is filled from the installed **package version** when not set explicitly.
 - **BigQuery writer** (Spark connector): time partitioning on `BUDAT` (MONTH), clustering on `RBUKRS`, `GJAHR`, `POPER`; generator metadata as **table labels** (`bigQueryTableLabel.*`).
@@ -22,6 +23,8 @@ Design and column coverage follow [SPEC-ACDOCA-Synthetic-Generator.md](SPEC-ACDO
 | `acdoca_generator/app.py` | Streamlit entry point |
 | `acdoca_generator/config/` | Industries, presets, countries, chart of accounts, field tiers, operating models |
 | `acdoca_generator/generators/` | Pipeline, master data, transactions, intercompany, supply chain, amounts, closing, document |
+| `acdoca_generator/core/` | Polars-based company master + domestic generator (Spark-free fast path) |
+| `acdoca_generator/spark_bridge.py` | `polars_to_spark(session, polars_df)` for a single conversion hop |
 | `acdoca_generator/dash_app/` | Optional Dash app: interactive supply-chain network graph |
 | `requirements-viz.txt` | Optional deps for the Dash viewer (`dash`, `plotly`, `dash-cytoscape`, `pandas`) |
 | `acdoca_generator/validators/` | Balance and consistency checks |
@@ -29,46 +32,64 @@ Design and column coverage follow [SPEC-ACDOCA-Synthetic-Generator.md](SPEC-ACDO
 | `notebooks/` | Databricks + BigQuery setup SQL and parameterized generation notebooks |
 | `scripts/run_generate_bq.py` | CLI: generate and write to BigQuery (Spark + connector) |
 | `databricks.yml` | Optional Databricks Asset Bundle (sample job) |
-| `.github/workflows/ci.yml` | GitHub Actions: JDK 17 + pytest |
+| `.github/workflows/ci.yml` | PR/push CI: Python only, **`pytest -m "not spark"`** (fast; Polars + non-Spark tests) |
+| `.github/workflows/ci-spark.yml` | Optional Spark suite: **`pytest -m spark`** (Temurin 17); `workflow_dispatch` + weekly schedule |
 | `scripts/complete_github_ssh.sh` | After registering your SSH key on GitHub, run to verify `ssh` and push `main` |
 
 ## Requirements
 
 - Python **3.10+**
 - **PySpark** 3.5.x (Spark 3.5 compatible)
-- **Java** (for local Spark tests and generation)
-- For production-style runs: a Spark session that can write to **Unity Catalog** Delta tables (e.g. Databricks cluster / DBR), or **BigQuery** using the Spark BigQuery connector plus a **GCS bucket** for staging. Local `pytest` uses Spark in `local[2]` mode when Java is available.
+- **Java** (for full **Spark** tests, local Spark generation, Databricks-style runs, and BigQuery via the connector). The default **PR CI** job does **not** require Java; it runs tests marked **`not spark`** only.
+- For production-style runs: a Spark session that can write to **Unity Catalog** Delta tables (e.g. Databricks cluster / DBR), or **BigQuery** using the Spark BigQuery connector plus a **GCS bucket** for staging. Spark-backed tests use `local[2]` when Java is available.
 
 ## Install
 
 ```bash
-git clone https://github.com/GDAVIDREEVES/databricks-sap-synthetic-data.git
-cd databricks-sap-synthetic-data
+git clone https://github.com/GDAVIDREEVES/bigquery-sap-synthetic-data.git
+cd bigquery-sap-synthetic-data
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 pip install -e .
 ```
 
-Install **test** dependencies (pytest is not in `requirements.txt`):
+Install **test** and **fast** (Polars) dependencies (pytest is not in `requirements.txt`):
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev,fast]"
 ```
+
+For tests only without Polars: `pip install -e ".[dev]"` (then run `pytest -m spark` or a subset; **`not spark`** tests that import Polars will fail without **`[fast]`**).
 
 ## Tests
 
 ```bash
-pip install -e ".[dev]"
-pytest
+pip install -e ".[dev,fast]"
+pytest -m "not spark"   # default PR-style: seconds, no Java
 ```
 
-**Java:** PySpark needs a JDK on the machine that runs tests. Without it, Spark-backed tests are skipped. Install **Temurin 17** (or another JDK 11+) and ensure `java -version` works; on macOS, `brew install --cask temurin@17` and set `JAVA_HOME` if needed (`/usr/libexec/java_home -v 17`).
+**Spark integration tests** (full PySpark pipeline, bridge tests):
 
-**Faster local runs:** The session-scoped Spark fixture can make a full `pytest` take several minutes. For a quick check: `pytest acdoca_generator/tests/test_industry_alias.py -v`.
+```bash
+# Requires JDK 17+ and PySpark; set on flaky runners if needed:
+export SPARK_LOCAL_IP=127.0.0.1
+pytest -m spark -vv
+```
+
+Tests that use the **`spark`** session fixture or shared Spark DataFrame fixtures are marked **`@pytest.mark.spark`** automatically via [`acdoca_generator/tests/conftest.py`](acdoca_generator/tests/conftest.py).
+
+**Java:** Only required for **`pytest -m spark`**. Without Java, run **`pytest -m "not spark"`** only. Install **Temurin 17** (or JDK 11+); on macOS, `brew install --cask temurin@17` and set `JAVA_HOME` if needed (`/usr/libexec/java_home -v 17`).
+
+**Faster local runs:** Prefer **`pytest -m "not spark"`** for routine checks. A full Spark run can take many minutes on small machines.
 
 **Supply chain Spark test:** `test_supply_chain_generates_hops_and_sc_awref` is skipped unless you set `ACDOCA_RUN_SPARK_TESTS=1` (slow; requires Java).
 
-CI: [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on push/PR to `main` with Temurin JDK 17 and Python 3.11 (`pip install -e ".[dev]"` then `pytest`).
+**CI**
+
+- [`.github/workflows/ci.yml`](.github/workflows/ci.yml): on push/PR to **`main`**, Python 3.11, **`pip install -e ".[dev,fast]"`**, then **`pytest -m "not spark"`** (no JDK step).
+- [`.github/workflows/ci-spark.yml`](.github/workflows/ci-spark.yml): **Temurin 17**, same install, **`pytest -m spark`** — trigger manually (**Actions → CI Spark integration → Run workflow**) or on the weekly schedule.
+
+**Performance note:** The Spark pipeline is optimized for **distributed** runs; on tiny local/CI data volumes, **JVM and job startup** dominate. The Polars **`core`** path is intended for fast iteration; production writes to Delta/BigQuery still use Spark as today.
 
 ## Databricks (recommended)
 
