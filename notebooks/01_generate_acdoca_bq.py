@@ -64,6 +64,8 @@ ic_pct_raw = _get_param("ic_pct", "0.25")
 include_reversals = _get_param_bool("include_reversals", True)
 include_closing = _get_param_bool("include_closing", True)
 seed = _get_param_int("seed", 42)
+include_supply_chain = _get_param_bool("include_supply_chain", False)
+sc_chains_per_period = _get_param_int("sc_chains_per_period", 50)
 
 full_table_name = _get_param("full_table_name", "my-gcp-project.synthetic_acdoca.journal_entries")
 gcs_temp_bucket = _get_param("gcs_temp_bucket", os.environ.get("ACDOCA_GCS_TEMP_BUCKET", ""))
@@ -80,6 +82,8 @@ if preset.strip().lower() != "custom":
     include_reversals = pr.include_reversals
     include_closing = pr.include_closing
     validation_profile = pr.validation_profile
+    include_supply_chain = pr.include_supply_chain
+    sc_chains_per_period = pr.sc_chains_per_period
 else:
     ic_pct = None if str(ic_pct_raw).strip() == "" else float(ic_pct_raw)
 
@@ -97,6 +101,8 @@ cfg = GenerationConfig(
     include_reversals=bool(include_reversals),
     include_closing=bool(include_closing),
     seed=int(seed),
+    include_supply_chain=bool(include_supply_chain),
+    sc_chains_per_period=int(sc_chains_per_period),
 )
 
 print("GenerationConfig:")
@@ -108,7 +114,8 @@ print(f"full_table_name={full_table_name!r} gcs_temp_bucket={gcs_temp_bucket!r}"
 if not str(gcs_temp_bucket).strip():
     raise RuntimeError("Set gcs_temp_bucket widget or ACDOCA_GCS_TEMP_BUCKET for BigQuery staging.")
 
-df = generate_acdoca_dataframe(spark, cfg)  # type: ignore[name-defined]
+_gen = generate_acdoca_dataframe(spark, cfg)  # type: ignore[name-defined]
+df = _gen.acdoca_df
 
 # COMMAND ----------
 results = run_validations(df, profile=validation_profile)

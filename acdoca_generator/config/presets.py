@@ -20,6 +20,8 @@ class DemoPreset:
     include_reversals: bool
     include_closing: bool
     validation_profile: str  # strict | fast
+    include_supply_chain: bool = False
+    sc_chains_per_period: int = 50
 
 
 DEMO_PRESETS: Dict[str, DemoPreset] = {
@@ -78,6 +80,22 @@ DEMO_PRESETS: Dict[str, DemoPreset] = {
         include_reversals=True,
         include_closing=True,
         validation_profile="strict",
+    ),
+    "supply_chain_demo": DemoPreset(
+        key="supply_chain_demo",
+        label="Financial supply chain demo",
+        industry_key="pharmaceutical",
+        country_isos_csv="US,DE,CH,IE,IN,FR,GB",
+        fiscal_year=2026,
+        fiscal_variant="calendar",
+        complexity="medium",
+        txn_per_cc_per_period=1000,
+        ic_pct=0.35,
+        include_reversals=True,
+        include_closing=True,
+        validation_profile="strict",
+        include_supply_chain=True,
+        sc_chains_per_period=50,
     ),
 }
 

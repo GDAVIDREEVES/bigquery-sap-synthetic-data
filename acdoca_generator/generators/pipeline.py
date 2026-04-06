@@ -8,14 +8,16 @@ from typing import List, Optional
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import DecimalType
-from pyspark.sql.window import Window
-
 from acdoca_generator.config.field_tiers import excluded_sql_names, fields_for_complexity
 from acdoca_generator.config.industries import get_industry
 from acdoca_generator.generators.amounts import fx_multiplier
 from acdoca_generator.generators.closing import closing_balanced_documents
 from acdoca_generator.generators.intercompany import ic_paired_documents
 from acdoca_generator.generators.master_data import build_companies
+from acdoca_generator.generators.supply_chain import (
+    export_supply_chain_flows_json,
+    generate_supply_chain_flows,
+)
 from acdoca_generator.generators.transactions import domestic_balanced_documents
 from acdoca_generator.utils.schema import acdoca_schema
 
@@ -33,17 +35,30 @@ class GenerationConfig:
     seed: int
     group_currency: str = "USD"
     ic_pct: Optional[float] = None  # None → industry template ic_share_default
+    include_supply_chain: bool = False
+    sc_chains_per_period: int = 50
+
+
+@dataclass
+class GenerationResult:
+    acdoca_df: DataFrame
+    supply_chain_flows_df: Optional[DataFrame] = None
 
 
 def _companies_indexed_with_fx(
     spark: SparkSession, companies_df: DataFrame, group_currency: str, seed: int
 ) -> DataFrame:
-    w = Window.orderBy("RBUKRS")
-    idx = companies_df.withColumn("ci", F.row_number().over(w) - F.lit(1))
-    rows = idx.collect()
-    fx_rows = [(r.RBUKRS, float(fx_multiplier(r.RHCUR, group_currency, seed, 1))) for r in rows]
-    fx_df = spark.createDataFrame(fx_rows, ["RBUKRS", "FX_KSL"])
-    return idx.join(fx_df, "RBUKRS", "left")
+    # Avoid Window.orderBy-only (single-partition shuffle); companies list is tiny.
+    rows = companies_df.orderBy("RBUKRS").collect()
+    ci_df = spark.createDataFrame(
+        [(r.RBUKRS, i) for i, r in enumerate(rows)],
+        ["RBUKRS", "ci"],
+    )
+    fx_df = spark.createDataFrame(
+        [(r.RBUKRS, float(fx_multiplier(r.RHCUR, group_currency, seed, 1))) for r in rows],
+        ["RBUKRS", "FX_KSL"],
+    )
+    return companies_df.join(ci_df, "RBUKRS", "inner").join(fx_df, "RBUKRS", "left")
 
 
 def _align_to_schema(df: DataFrame) -> DataFrame:
@@ -118,7 +133,14 @@ def _fill_tier_defaults(df: DataFrame, complexity: str) -> DataFrame:
     return out
 
 
-def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> DataFrame:
+def export_supply_chain_json(flows_df: Optional[DataFrame], path: str) -> None:
+    """Write supply chain flows to JSON for the Dash viewer."""
+    if flows_df is None:
+        return
+    export_supply_chain_flows_json(flows_df, path)
+
+
+def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> GenerationResult:
     schema = acdoca_schema()
     industry = get_industry(cfg.industry_key)
     ic_share = cfg.ic_pct if cfg.ic_pct is not None else industry.ic_share_default
@@ -140,6 +162,7 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Dat
     n_ic_events = ic_lines // 4
 
     acc = spark.createDataFrame([], schema)
+    sc_flows_out: Optional[DataFrame] = None
 
     if n_domestic_docs > 0:
         dom = domestic_balanced_documents(
@@ -151,6 +174,7 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Dat
             cfg.group_currency,
             cfg.include_reversals,
             industry,
+            n_comp=n_comp,
         )
         if dom is not None:
             acc = acc.unionByName(_align_to_schema(dom), allowMissingColumns=True)
@@ -163,9 +187,25 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Dat
             cfg.fiscal_year,
             cfg.seed,
             cfg.group_currency,
+            n_comp=n_comp,
         )
         if icdf is not None:
             acc = acc.unionByName(_align_to_schema(icdf), allowMissingColumns=True)
+
+    if cfg.include_supply_chain and n_comp >= 2:
+        n_chains = max(0, int(cfg.sc_chains_per_period))
+        sc_flows, sc_ic = generate_supply_chain_flows(
+            spark,
+            n_chains,
+            cidx,
+            cfg.industry_key,
+            cfg.fiscal_year,
+            cfg.seed,
+            cfg.group_currency,
+        )
+        if sc_ic is not None:
+            acc = acc.unionByName(_align_to_schema(sc_ic), allowMissingColumns=True)
+        sc_flows_out = sc_flows
 
     if cfg.include_closing:
         close = closing_balanced_documents(
@@ -174,6 +214,7 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Dat
             cfg.fiscal_year,
             cfg.seed,
             cfg.group_currency,
+            n_comp=n_comp,
         )
         if close is not None:
             acc = acc.unionByName(_align_to_schema(close), allowMissingColumns=True)
@@ -183,4 +224,4 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Dat
 
     acc = _fill_tier_defaults(acc, cfg.complexity)
     acc = _null_fields_above_tier(acc, cfg.complexity)
-    return acc
+    return GenerationResult(acdoca_df=acc, supply_chain_flows_df=sc_flows_out)

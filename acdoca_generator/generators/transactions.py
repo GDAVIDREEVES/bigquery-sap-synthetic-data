@@ -123,17 +123,18 @@ def domestic_balanced_documents(
     group_currency: str,
     include_reversals: bool,
     industry: IndustryTemplate,
+    *,
+    n_comp: int,
 ) -> DataFrame:
     """
     n_docs two-line GL documents, balanced on WSL.
     companies_indexed must include RBUKRS, LAND1, RHCUR, RWCUR, KOKRS, PRCTR, RCNTR, SEGMENT, FX_KSL.
+    n_comp must match len(country_isos) used to build companies_indexed (avoid a Spark job for countDistinct).
     """
     if n_docs <= 0:
         return None
 
-    n_row = companies_indexed.select(F.countDistinct("ci").alias("n")).collect()[0].n
-    n_comp = int(n_row or 0)
-    if n_comp == 0:
+    if n_comp <= 0:
         return None
 
     base = spark.range(0, n_docs).withColumnRenamed("id", "doc_id")

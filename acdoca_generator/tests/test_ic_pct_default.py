@@ -1,36 +1,8 @@
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
-from acdoca_generator.generators.pipeline import GenerationConfig, generate_acdoca_dataframe
 
-
-def test_ic_pct_none_uses_industry_default(spark: SparkSession):
-    tech = GenerationConfig(
-        industry_key="technology",
-        country_isos=["US", "DE"],
-        fiscal_year=2026,
-        fiscal_variant="calendar",
-        complexity="light",
-        txn_per_cc_per_period=200,
-        ic_pct=None,
-        include_reversals=False,
-        include_closing=False,
-        seed=99,
-    )
-    pharma = GenerationConfig(
-        industry_key="pharmaceutical",
-        country_isos=["US", "DE"],
-        fiscal_year=2026,
-        fiscal_variant="calendar",
-        complexity="light",
-        txn_per_cc_per_period=200,
-        ic_pct=None,
-        include_reversals=False,
-        include_closing=False,
-        seed=99,
-    )
-    d_t = generate_acdoca_dataframe(spark, tech)
-    d_p = generate_acdoca_dataframe(spark, pharma)
-    ic_t = d_t.filter(F.col("RASSC") != "").count()
-    ic_p = d_p.filter(F.col("RASSC") != "").count()
+def test_ic_pct_none_uses_industry_default(tech_ic_default_df: DataFrame, pharma_ic_default_df: DataFrame):
+    ic_t = tech_ic_default_df.filter(F.col("RASSC") != "").count()
+    ic_p = pharma_ic_default_df.filter(F.col("RASSC") != "").count()
     assert ic_t > ic_p, f"technology default IC share > pharma: {ic_t} vs {ic_p}"

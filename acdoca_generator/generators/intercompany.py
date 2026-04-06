@@ -16,12 +16,14 @@ def ic_paired_documents(
     gjahr: int,
     seed: int,
     group_currency: str,
+    *,
+    n_comp: int,
 ) -> DataFrame:
     """
     Each event = 2 documents x 2 lines = 4 ACDOCA rows.
     companies_indexed: ci, RBUKRS, LAND1, RHCUR, RWCUR, KOKRS, PRCTR, RCNTR, SEGMENT, FX_KSL.
+    n_comp must match len(country_isos) used to build companies_indexed.
     """
-    n_comp = int(companies_indexed.select(F.countDistinct("ci").alias("n")).collect()[0].n or 0)
     if n_events <= 0 or n_comp < 2:
         return None
 

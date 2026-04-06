@@ -52,7 +52,7 @@ def _csv_list(v: str) -> list[str]:
 
 # COMMAND ----------
 # Parameters (widgets in notebook UI; job parameters can override).
-preset = _get_param("preset", "custom")  # custom | quick_smoke | tp_workshop | globe_lite | ml_features
+preset = _get_param("preset", "custom")  # custom | quick_smoke | tp_workshop | globe_lite | ml_features | supply_chain_demo
 validation_profile = _get_param("validation_profile", "strict")  # strict | fast
 
 industry_key = _get_param("industry_key", "consumer_goods")
@@ -66,6 +66,8 @@ ic_pct_raw = _get_param("ic_pct", "0.25")  # empty string → industry template 
 include_reversals = _get_param_bool("include_reversals", True)
 include_closing = _get_param_bool("include_closing", True)
 seed = _get_param_int("seed", 42)
+include_supply_chain = _get_param_bool("include_supply_chain", False)
+sc_chains_per_period = _get_param_int("sc_chains_per_period", 50)
 
 full_table_name = _get_param("full_table_name", "synthetic.acdoca.journal_entries")
 output_format = _get_param("output_format", "delta")  # delta | parquet
@@ -83,6 +85,8 @@ if preset.strip().lower() != "custom":
     include_reversals = pr.include_reversals
     include_closing = pr.include_closing
     validation_profile = pr.validation_profile
+    include_supply_chain = pr.include_supply_chain
+    sc_chains_per_period = pr.sc_chains_per_period
 else:
     ic_pct = None if str(ic_pct_raw).strip() == "" else float(ic_pct_raw)
 
@@ -101,6 +105,8 @@ cfg = GenerationConfig(
     include_reversals=bool(include_reversals),
     include_closing=bool(include_closing),
     seed=int(seed),
+    include_supply_chain=bool(include_supply_chain),
+    sc_chains_per_period=int(sc_chains_per_period),
 )
 
 print("GenerationConfig:")
@@ -109,7 +115,8 @@ print(f"preset={preset!r} validation_profile={validation_profile!r}")
 
 
 # COMMAND ----------
-df = generate_acdoca_dataframe(spark, cfg)  # type: ignore[name-defined]
+_gen = generate_acdoca_dataframe(spark, cfg)  # type: ignore[name-defined]
+df = _gen.acdoca_df
 
 
 # COMMAND ----------

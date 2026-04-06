@@ -50,7 +50,11 @@ def _csv_list(v: str) -> list[str]:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="ACDOCA synthetic generator → BigQuery")
-    p.add_argument("--preset", default="custom", help="custom | quick_smoke | tp_workshop | globe_lite | ml_features")
+    p.add_argument(
+        "--preset",
+        default="custom",
+        help="custom | quick_smoke | tp_workshop | globe_lite | ml_features | supply_chain_demo",
+    )
     p.add_argument("--validation-profile", default="strict", choices=("strict", "fast"))
     p.add_argument("--industry-key", default="consumer_goods")
     p.add_argument("--country-isos", default="US,DE,GB", help="Comma-separated ISO codes")
@@ -65,6 +69,18 @@ def main() -> int:
     )
     p.add_argument("--include-reversals", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--include-closing", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument(
+        "--include-supply-chain",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Add financial supply-chain hops (custom preset only; supply_chain_demo preset enables by default)",
+    )
+    p.add_argument(
+        "--sc-chains",
+        type=int,
+        default=50,
+        help="Number of supply chain flows when supply chain is enabled",
+    )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument(
         "--full-table-name",
@@ -95,6 +111,8 @@ def main() -> int:
     include_reversals = args.include_reversals
     include_closing = args.include_closing
     seed = args.seed
+    include_supply_chain = bool(args.include_supply_chain)
+    sc_chains_per_period = int(args.sc_chains)
 
     if preset != "custom":
         pr = get_preset(preset)
@@ -108,6 +126,8 @@ def main() -> int:
         include_reversals = pr.include_reversals
         include_closing = pr.include_closing
         validation_profile = pr.validation_profile
+        include_supply_chain = pr.include_supply_chain
+        sc_chains_per_period = pr.sc_chains_per_period
     else:
         ic_pct = None if str(args.ic_pct).strip() == "" else float(args.ic_pct)
 
@@ -123,6 +143,8 @@ def main() -> int:
         include_reversals=bool(include_reversals),
         include_closing=bool(include_closing),
         seed=int(seed),
+        include_supply_chain=include_supply_chain,
+        sc_chains_per_period=sc_chains_per_period,
     )
 
     gcs_bucket = (args.gcs_temp_bucket or os.environ.get("ACDOCA_GCS_TEMP_BUCKET") or "").strip()
@@ -138,7 +160,8 @@ def main() -> int:
     print(f"BigQuery table={args.full_table_name!r} gcs_temp_bucket={gcs_bucket!r}")
 
     spark = _spark()
-    df = generate_acdoca_dataframe(spark, cfg)
+    gen_result = generate_acdoca_dataframe(spark, cfg)
+    df = gen_result.acdoca_df
 
     results = run_validations(df, profile=validation_profile)
     fails = blocking_failures(results)
