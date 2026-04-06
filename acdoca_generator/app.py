@@ -195,10 +195,16 @@ def main() -> None:
         )
         parquet_path = None
     else:
-        target = st.text_input("Target catalog.schema.table", value="synthetic.acdoca.journal_entries")
+        target = st.text_input(
+            "Target table (catalog.schema.table for metastore-backed Delta)",
+            value="synthetic.acdoca.journal_entries",
+        )
         parquet_path = None
         if fmt == "parquet":
-            parquet_path = st.text_input("Parquet path (DBFS or UC volume)", value="/tmp/acdoca_synthetic")
+            parquet_path = st.text_input(
+                "Parquet path (local directory or cloud URI)",
+                value="/tmp/acdoca_synthetic",
+            )
         gcs_temp_bucket = None
 
     if st.button("Generate", type="primary"):

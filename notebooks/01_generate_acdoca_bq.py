@@ -8,7 +8,8 @@
 #   )
 # Or use a Dataproc image that includes the connector.
 #
-# Parameters: align with Streamlit / CLI; use notebook widget APIs when available, else defaults.
+# Parameters: defaults below, or override with environment variables ACDOCA_<NAME>
+# (NAME is the widget name in UPPER_SNAKE), e.g. export ACDOCA_PRESET=quick_smoke
 
 # %%
 from __future__ import annotations
@@ -26,11 +27,10 @@ from acdoca_generator.validators.balance import blocking_failures, run_validatio
 
 
 def _get_param(name: str, default: str) -> str:
-    try:
-        dbutils.widgets.text(name, default)  # type: ignore[name-defined]
-        return dbutils.widgets.get(name)  # type: ignore[name-defined]
-    except Exception:
-        return default
+    env_key = "ACDOCA_" + name.upper()
+    if env_key in os.environ:
+        return os.environ[env_key]
+    return default
 
 
 def _get_param_int(name: str, default: int) -> int:
