@@ -8,6 +8,7 @@ from pyspark.sql.column import Column
 from pyspark.sql.types import DecimalType, StringType
 
 from acdoca_generator.config.chart_of_accounts import SAMPLE_GL
+from acdoca_generator.config.functional_areas import _KIND_DEFAULT, _ROLE_OVERRIDES
 from acdoca_generator.config.industries import IndustryTemplate
 
 # Balanced two-line postings: (debit account key, credit account key) in SAMPLE_GL.
@@ -101,6 +102,23 @@ def _gl_pair_columns(txn_type: Column) -> tuple[Column, Column]:
         debit.otherwise(F.lit(SAMPLE_GL["opex_sga"])),
         credit.otherwise(F.lit(SAMPLE_GL["cash"])),
     )
+
+
+def _rfarea_column(txn_type: Column, role_code: Column) -> Column:
+    """Spark column expression: (txn_type, ROLE_CODE) -> SAP functional-area code (RFAREA).
+
+    Built as a chained F.when ladder using the same pattern as _gl_pair_columns.
+    Role overrides take precedence over the kind default.
+    """
+    expr = F.lit("")
+    for kind, fkber in _KIND_DEFAULT.items():
+        expr = F.when(txn_type == F.lit(kind), F.lit(fkber)).otherwise(expr)
+    for (kind, role), fkber in _ROLE_OVERRIDES.items():
+        expr = F.when(
+            (txn_type == F.lit(kind)) & (role_code == F.lit(role)),
+            F.lit(fkber),
+        ).otherwise(expr)
+    return expr
 
 
 def _amt_scale_column(txn_type: Column, industry: IndustryTemplate) -> Column:
@@ -214,6 +232,7 @@ def domestic_balanced_documents(
     base = base.withColumn("RASSC", F.lit(""))
     base = base.withColumn("PPRCTR", F.col("PRCTR"))
     base = base.withColumn("PBUKRS", F.col("RBUKRS"))
+    base = base.withColumn("RFAREA", _rfarea_column(F.col("txn_type"), F.col("ROLE_CODE")))
     base = base.withColumn("LIFNR", F.lit(""))
     base = base.withColumn("KUNNR", F.lit(""))
     base = base.withColumn("RUNIT", F.lit(None).cast(StringType()))

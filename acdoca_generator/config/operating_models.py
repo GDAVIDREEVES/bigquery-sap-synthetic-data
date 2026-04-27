@@ -86,6 +86,77 @@ DEFAULT_ROLES: tuple[EntityRole, ...] = (
         0.0,
         0.0,
     ),
+    # ----- Expanded TP role taxonomy (manufacturing, distribution, services, IP, principal/entrepreneur, hybrid) -----
+    EntityRole(
+        "LMFR",
+        "Licensed Manufacturer",
+        frozenset({"IN", "MX", "BR", "ID"}),
+        0.08,
+        0.15,
+    ),
+    EntityRole(
+        "FFD",
+        "Fully-Fledged Distributor",
+        frozenset({"US", "GB", "DE", "FR", "JP"}),
+        0.05,
+        0.10,
+    ),
+    EntityRole(
+        "COMA",
+        "Commission Agent / Sales Agent",
+        frozenset({"FR", "IT", "ES"}),
+        0.01,
+        0.03,
+    ),
+    EntityRole(
+        "BSDIST",
+        "Buy-Sell Distributor",
+        frozenset({"BR", "IN", "CN", "MX"}),
+        0.03,
+        0.06,
+    ),
+    EntityRole(
+        "RSP",
+        "Routine Service Provider",
+        frozenset({"IN", "PH", "PL", "CR"}),
+        0.05,
+        0.08,
+    ),
+    EntityRole(
+        "SSP",
+        "Strategic Service Provider",
+        frozenset({"US", "CH", "GB"}),
+        0.10,
+        0.18,
+    ),
+    EntityRole(
+        "IPDEV",
+        "IP Developer",
+        frozenset({"US", "IL", "IN"}),
+        0.05,
+        0.10,
+    ),
+    EntityRole(
+        "IPLIC",
+        "IP Licensee",
+        frozenset({"BR", "IN", "CN", "RU"}),
+        0.05,
+        0.12,
+    ),
+    EntityRole(
+        "ENTR",
+        "Entrepreneur",
+        frozenset({"US", "DE", "JP"}),
+        0.20,
+        0.40,
+    ),
+    EntityRole(
+        "CPE",
+        "Central Purchasing Entity",
+        frozenset({"SG", "NL", "CH"}),
+        0.03,
+        0.05,
+    ),
 )
 
 ROLE_BY_CODE = {r.code: r for r in DEFAULT_ROLES}

@@ -1,8 +1,17 @@
 """Segment-level P&L aggregation for operational TP analytics.
 
 Rolls ACDOCA journal lines up to (RBUKRS, ROLE_CODE, SEGMENT, GJAHR, POPER) grain,
-classifies each line by GL-account category, and produces revenue / COGS / opex /
-IC-charges / depreciation columns plus operating profit and operating margin.
+classifies each line by (GL-account category, RFAREA), and produces:
+revenue / other_income / cogs / opex_production / opex_rd / opex_sm / opex_ga /
+opex_dist / ic_charges / depreciation, plus operating profit and operating margin.
+
+The opex GL bucket (ACCOUNT_RANGES "opex") is split by SAP functional area
+(RFAREA) into five functional buckets driven by the line's function:
+- 0100 Production -> opex_production
+- 0400 R&D        -> opex_rd
+- 0200 Sales / 0500 Marketing -> opex_sm
+- 0600 Distribution -> opex_dist
+- 0300 Administration / blank / unknown -> opex_ga (default)
 
 KSL is already in group currency (FX-translated upstream), so it sums directly.
 SAP DRCRK convention: revenue and other-income lines are credit (KSL negative);
@@ -13,6 +22,9 @@ Note: SEGMENT is currently constant ("SEG1") on every company in master_data.py,
 so the segment dimension collapses today. The aggregator is correct; the data
 shape just doesn't yet exercise multi-segment. Multi-segment population is a
 separate realism gap.
+
+Note: RFAREA is populated at complexity tier "M" (medium) and above. Light-tier
+runs null RFAREA, in which case all opex falls into opex_ga via the default branch.
 """
 
 from __future__ import annotations
@@ -30,6 +42,20 @@ PNL_CATEGORIES: tuple[str, ...] = (
     "other_income",
     "cogs",
     "opex",
+    "ic_charges",
+    "depreciation",
+)
+
+# Output columns after the RFAREA-driven split of `opex`.
+PIVOT_BUCKETS: tuple[str, ...] = (
+    "revenue",
+    "other_income",
+    "cogs",
+    "opex_production",
+    "opex_rd",
+    "opex_sm",
+    "opex_ga",
+    "opex_dist",
     "ic_charges",
     "depreciation",
 )
@@ -67,12 +93,26 @@ def _categorize_column() -> Column:
     return expr
 
 
+def _bucket_column() -> Column:
+    """Build the pivot key: PNL_CATEGORY for everything except opex; opex is split by RFAREA."""
+    return (
+        F.when(F.col("PNL_CATEGORY") == "opex",
+            F.when(F.col("RFAREA") == "0100", F.lit("opex_production"))
+             .when(F.col("RFAREA") == "0400", F.lit("opex_rd"))
+             .when(F.col("RFAREA").isin("0200", "0500"), F.lit("opex_sm"))
+             .when(F.col("RFAREA") == "0600", F.lit("opex_dist"))
+             .otherwise(F.lit("opex_ga"))  # 0300 + blank/null/unknown -> G&A
+        ).otherwise(F.col("PNL_CATEGORY"))
+    )
+
+
 def build_segment_pl(acdoca_df: DataFrame, companies_df: DataFrame) -> DataFrame:
-    """Aggregate ACDOCA into a segment-level P&L.
+    """Aggregate ACDOCA into a segment-level P&L with functional opex split.
 
     Grain: (RBUKRS, ROLE_CODE, SEGMENT, GJAHR, POPER).
-    Output columns: revenue, other_income, cogs, opex, ic_charges, depreciation,
-    operating_profit, operating_margin.
+    Output columns: revenue, other_income, cogs, opex_production, opex_rd,
+    opex_sm, opex_ga, opex_dist, ic_charges, depreciation, operating_profit,
+    operating_margin.
 
     Filters to P&L categories only (excludes balance sheet and tax_extraordinary).
     Revenue-side amounts are sign-flipped so revenue is displayed positive.
@@ -83,17 +123,18 @@ def build_segment_pl(acdoca_df: DataFrame, companies_df: DataFrame) -> DataFrame
         .filter(F.col("RACCT").isNotNull())
         .withColumn("PNL_CATEGORY", _categorize_column())
         .filter(F.col("PNL_CATEGORY").isin(*PNL_CATEGORIES))
+        .withColumn("BUCKET", _bucket_column())
         .join(F.broadcast(roles), "RBUKRS", "left")
     )
     pivoted = (
         annotated
         .groupBy("RBUKRS", "ROLE_CODE", "SEGMENT", "GJAHR", "POPER")
-        .pivot("PNL_CATEGORY", list(PNL_CATEGORIES))
+        .pivot("BUCKET", list(PIVOT_BUCKETS))
         .agg(F.sum("KSL"))
     )
 
     out = pivoted
-    for cat in PNL_CATEGORIES:
+    for cat in PIVOT_BUCKETS:
         col = F.coalesce(F.col(cat), F.lit(0)).cast(DecimalType(23, 2))
         if cat in _REVENUE_SIDE:
             col = -col
@@ -103,7 +144,10 @@ def build_segment_pl(acdoca_df: DataFrame, companies_df: DataFrame) -> DataFrame
         "operating_profit",
         (
             F.col("revenue") + F.col("other_income")
-            - F.col("cogs") - F.col("opex") - F.col("ic_charges") - F.col("depreciation")
+            - F.col("cogs")
+            - F.col("opex_production") - F.col("opex_rd") - F.col("opex_sm")
+            - F.col("opex_ga") - F.col("opex_dist")
+            - F.col("ic_charges") - F.col("depreciation")
         ).cast(DecimalType(23, 2)),
     )
     rev_total = F.col("revenue") + F.col("other_income")

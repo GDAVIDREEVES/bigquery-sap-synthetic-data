@@ -7,6 +7,7 @@ from decimal import Decimal
 import pytest
 
 from acdoca_generator.aggregations.segment_pl import (
+    PIVOT_BUCKETS,
     PNL_CATEGORIES,
     build_segment_pl,
     pnl_category,
@@ -64,6 +65,12 @@ def test_pnl_categories_constant_matches_account_ranges() -> None:
         assert cat in range_cats, f"PNL_CATEGORIES has unknown category {cat!r}"
 
 
+def test_pivot_buckets_partition_pnl_categories() -> None:
+    """PIVOT_BUCKETS replaces 'opex' with 5 functional buckets; everything else identical."""
+    expected_opex_split = {"opex_production", "opex_rd", "opex_sm", "opex_ga", "opex_dist"}
+    assert set(PIVOT_BUCKETS) == (set(PNL_CATEGORIES) - {"opex"}) | expected_opex_split
+
+
 def test_sample_gl_revenue_classifies_as_revenue() -> None:
     """SAMPLE_GL revenue accounts are in the revenue range."""
     for k in ("revenue_tp", "revenue_service", "revenue_ic"):
@@ -113,7 +120,7 @@ def _make_companies(spark, rows):
 def _make_acdoca(spark, rows):
     """Build a tiny ACDOCA-shape DF with only the columns build_segment_pl reads.
 
-    The aggregator only needs RBUKRS, SEGMENT, GJAHR, POPER, RACCT, KSL.
+    The aggregator needs RBUKRS, SEGMENT, GJAHR, POPER, RACCT, RFAREA, KSL.
     """
     from pyspark.sql.types import (
         DecimalType,
@@ -129,6 +136,7 @@ def _make_acdoca(spark, rows):
         StructField("GJAHR", IntegerType(), True),
         StructField("POPER", StringType(), True),
         StructField("RACCT", StringType(), True),
+        StructField("RFAREA", StringType(), True),
         StructField("KSL", DecimalType(23, 2), True),
     ])
     return spark.createDataFrame(rows, schema)
@@ -139,8 +147,8 @@ def test_build_segment_pl_revenue_positive(spark_session) -> None:
     """Revenue is sign-flipped to display positive; COGS is left positive."""
     spark = spark_session
     acdoca = _make_acdoca(spark, [
-        ("1000", "SEG1", 2025, "001", "0800000", Decimal("-1000.00")),  # revenue (credit)
-        ("1000", "SEG1", 2025, "001", "0900000", Decimal("600.00")),    # cogs (debit)
+        ("1000", "SEG1", 2025, "001", "0800000", "0200", Decimal("-1000.00")),  # revenue (credit)
+        ("1000", "SEG1", 2025, "001", "0900000", "0100", Decimal("600.00")),    # cogs (debit)
     ])
     companies = _make_companies(spark, [("1000", "LRD")])
     pl = build_segment_pl(acdoca, companies).collect()
@@ -156,12 +164,12 @@ def test_build_segment_pl_operating_profit_arithmetic(spark_session) -> None:
     """operating_profit = revenue + other_income - cogs - opex - ic_charges - depreciation."""
     spark = spark_session
     acdoca = _make_acdoca(spark, [
-        ("1000", "SEG1", 2025, "001", "0800000", Decimal("-2000.00")),  # revenue
-        ("1000", "SEG1", 2025, "001", "0860000", Decimal("-100.00")),   # other_income (interest)
-        ("1000", "SEG1", 2025, "001", "0900000", Decimal("800.00")),    # cogs
-        ("1000", "SEG1", 2025, "001", "0925000", Decimal("150.00")),    # opex (R&D)
-        ("1000", "SEG1", 2025, "001", "0950000", Decimal("50.00")),     # ic_charges (mgmt fee)
-        ("1000", "SEG1", 2025, "001", "0970000", Decimal("75.00")),     # depreciation
+        ("1000", "SEG1", 2025, "001", "0800000", "0200", Decimal("-2000.00")),  # revenue
+        ("1000", "SEG1", 2025, "001", "0860000", "0300", Decimal("-100.00")),   # other_income (interest)
+        ("1000", "SEG1", 2025, "001", "0900000", "0100", Decimal("800.00")),    # cogs
+        ("1000", "SEG1", 2025, "001", "0925000", "0400", Decimal("150.00")),    # opex (R&D)
+        ("1000", "SEG1", 2025, "001", "0950000", "0300", Decimal("50.00")),     # ic_charges (mgmt fee)
+        ("1000", "SEG1", 2025, "001", "0970000", "0300", Decimal("75.00")),     # depreciation
     ])
     companies = _make_companies(spark, [("1000", "IPPR")])
     row = build_segment_pl(acdoca, companies).collect()[0]
@@ -175,8 +183,8 @@ def test_build_segment_pl_operating_profit_arithmetic(spark_session) -> None:
 def test_build_segment_pl_role_code_attached(spark_session) -> None:
     spark = spark_session
     acdoca = _make_acdoca(spark, [
-        ("1000", "SEG1", 2025, "001", "0800000", Decimal("-100.00")),
-        ("3000", "SEG1", 2025, "001", "0800000", Decimal("-200.00")),
+        ("1000", "SEG1", 2025, "001", "0800000", "0200", Decimal("-100.00")),
+        ("3000", "SEG1", 2025, "001", "0800000", "0200", Decimal("-200.00")),
     ])
     companies = _make_companies(spark, [("1000", "IPPR"), ("3000", "LRD")])
     rows = {r.RBUKRS: r.ROLE_CODE for r in build_segment_pl(acdoca, companies).collect()}
@@ -190,10 +198,10 @@ def test_build_segment_pl_grain_uniqueness(spark_session) -> None:
 
     spark = spark_session
     acdoca = _make_acdoca(spark, [
-        ("1000", "SEG1", 2025, "001", "0800000", Decimal("-100.00")),
-        ("1000", "SEG1", 2025, "001", "0900000", Decimal("60.00")),
-        ("1000", "SEG1", 2025, "002", "0800000", Decimal("-110.00")),
-        ("3000", "SEG1", 2025, "001", "0800000", Decimal("-200.00")),
+        ("1000", "SEG1", 2025, "001", "0800000", "0200", Decimal("-100.00")),
+        ("1000", "SEG1", 2025, "001", "0900000", "0100", Decimal("60.00")),
+        ("1000", "SEG1", 2025, "002", "0800000", "0200", Decimal("-110.00")),
+        ("3000", "SEG1", 2025, "001", "0800000", "0200", Decimal("-200.00")),
     ])
     companies = _make_companies(spark, [("1000", "IPPR"), ("3000", "LRD")])
     pl = build_segment_pl(acdoca, companies)
@@ -210,9 +218,9 @@ def test_build_segment_pl_excludes_balance_sheet(spark_session) -> None:
     """Cash / inventory / payables postings produce no P&L rows."""
     spark = spark_session
     acdoca = _make_acdoca(spark, [
-        ("1000", "SEG1", 2025, "001", "0010000", Decimal("500.00")),  # cash (balance sheet)
-        ("1000", "SEG1", 2025, "001", "0220000", Decimal("300.00")),  # inventory
-        ("1000", "SEG1", 2025, "001", "0500000", Decimal("-800.00")), # ap_trade
+        ("1000", "SEG1", 2025, "001", "0010000", "", Decimal("500.00")),  # cash (balance sheet)
+        ("1000", "SEG1", 2025, "001", "0220000", "", Decimal("300.00")),  # inventory
+        ("1000", "SEG1", 2025, "001", "0500000", "", Decimal("-800.00")), # ap_trade
     ])
     companies = _make_companies(spark, [("1000", "LRD")])
     rows = build_segment_pl(acdoca, companies).collect()
@@ -224,7 +232,7 @@ def test_build_segment_pl_zero_revenue_margin_is_null(spark_session) -> None:
     """Entity with only opex (no revenue) → operating_margin IS NULL."""
     spark = spark_session
     acdoca = _make_acdoca(spark, [
-        ("1000", "SEG1", 2025, "001", "0925000", Decimal("100.00")),  # opex only
+        ("1000", "SEG1", 2025, "001", "0925000", "0400", Decimal("100.00")),  # opex (R&D)
     ])
     companies = _make_companies(spark, [("1000", "RDSC")])
     row = build_segment_pl(acdoca, companies).collect()[0]
@@ -232,3 +240,38 @@ def test_build_segment_pl_zero_revenue_margin_is_null(spark_session) -> None:
     assert row.other_income == Decimal("0.00")
     assert row.operating_margin is None
     assert row.operating_profit == Decimal("-100.00")
+    assert row.opex_rd == Decimal("100.00")  # routed to opex_rd by RFAREA=0400
+
+
+@pytest.mark.spark
+def test_build_segment_pl_opex_split_by_rfarea(spark_session) -> None:
+    """Five opex rows on the same GL with different RFAREA each land in their bucket."""
+    spark = spark_session
+    acdoca = _make_acdoca(spark, [
+        ("1000", "SEG1", 2025, "001", "0930000", "0100", Decimal("11.00")),  # production
+        ("1000", "SEG1", 2025, "001", "0930000", "0200", Decimal("22.00")),  # sales -> opex_sm
+        ("1000", "SEG1", 2025, "001", "0930000", "0500", Decimal("33.00")),  # marketing -> opex_sm
+        ("1000", "SEG1", 2025, "001", "0930000", "0300", Decimal("44.00")),  # admin
+        ("1000", "SEG1", 2025, "001", "0930000", "0400", Decimal("55.00")),  # R&D
+        ("1000", "SEG1", 2025, "001", "0930000", "0600", Decimal("66.00")),  # distribution
+    ])
+    companies = _make_companies(spark, [("1000", "ENTR")])
+    row = build_segment_pl(acdoca, companies).collect()[0]
+    assert row.opex_production == Decimal("11.00")
+    assert row.opex_sm == Decimal("55.00")  # 22 + 33 (sales + marketing)
+    assert row.opex_ga == Decimal("44.00")
+    assert row.opex_rd == Decimal("55.00")
+    assert row.opex_dist == Decimal("66.00")
+    # Old 'opex' column should not exist
+    assert "opex" not in row.asDict()
+
+
+@pytest.mark.spark
+def test_build_segment_pl_blank_rfarea_falls_to_ga(spark_session) -> None:
+    spark = spark_session
+    acdoca = _make_acdoca(spark, [
+        ("1000", "SEG1", 2025, "001", "0930000", "", Decimal("100.00")),
+    ])
+    companies = _make_companies(spark, [("1000", "IPPR")])
+    row = build_segment_pl(acdoca, companies).collect()[0]
+    assert row.opex_ga == Decimal("100.00")

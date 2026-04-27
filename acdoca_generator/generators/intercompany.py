@@ -128,6 +128,13 @@ def ic_paired_documents(
     belnr_num = F.lit(8_000_000_000) + F.col("eid") * F.lit(2) + F.when(buyer, F.lit(0)).otherwise(F.lit(1))
     belnr = F.lpad((F.pmod(belnr_num, F.lit(10_000_000_000))).cast("string"), 10, "0")
 
+    rfarea = (
+        F.when(racct == F.lit(SAMPLE_GL["revenue_ic"]), F.lit("0200"))
+        .when(racct == F.lit(SAMPLE_GL["cogs_ic"]), F.lit("0100"))
+        .when(racct == F.lit(SAMPLE_GL["ic_service_exp"]), F.lit("0300"))
+        .otherwise(F.lit(""))  # BS legs (inventory_fg, ap_ic, ar_ic) blank per SAP
+    )
+
     out = (
         ev.withColumn("RBUKRS", rbukrs)
         .withColumn("PRCTR", prctr)
@@ -142,6 +149,7 @@ def ic_paired_documents(
         .withColumn("PPRCTR", partner_prctr)
         .withColumn("PBUKRS", partner_bukrs)
         .withColumn("RACCT", racct)
+        .withColumn("RFAREA", rfarea)
         .withColumn("WSL", wsl.cast(DecimalType(23, 2)))
         .withColumn("BSCHL", bschl)
         .withColumn("DRCRK", drcrk)

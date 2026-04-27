@@ -82,6 +82,7 @@ def closing_balanced_documents(
         .withColumn("RRCTY", F.lit("0"))
         .withColumn("RMVCT", F.lit(""))
         .withColumn("RACCT", racct)
+        .withColumn("RFAREA", F.lit("0300"))
         .withColumn("WSL", wsl.cast(DecimalType(23, 2)))
         .withColumn("BSCHL", bschl)
         .withColumn("DRCRK", drcrk)

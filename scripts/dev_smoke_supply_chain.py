@@ -54,6 +54,7 @@ def main() -> int:
         ic_pct=0.30,
         include_supply_chain=True,
         sc_chains_per_period=12,
+        include_segment_pl=True,
     )
 
     print(f"[smoke] generating with {len(cfg.country_isos)} countries, "
@@ -137,6 +138,21 @@ def main() -> int:
     export_supply_chain_json(flows, str(out_path))
     print(f"[smoke] flows exported to {out_path} ({n_flows} records)")
     print(f"[smoke] launch viewer: .venv-plan/bin/python -m acdoca_generator.dash_app.app --data {out_path}")
+
+    # Segment P&L with functional opex split — operational TP signal
+    if result.segment_pl_df is not None:
+        print("[smoke] segment P&L (functional opex split):")
+        result.segment_pl_df.select(
+            "RBUKRS", "ROLE_CODE", "POPER",
+            "revenue", "cogs",
+            "opex_production", "opex_rd", "opex_sm", "opex_ga", "opex_dist",
+            "operating_profit", "operating_margin",
+        ).orderBy("RBUKRS", "POPER").show(20, truncate=False)
+
+        # ROLE_CODE lives on the master, not on ACDOCA lines, so distribution per
+        # role requires a join against the segment_pl output instead of acdoca directly.
+        print("[smoke] RFAREA distribution (acdoca line counts):")
+        acdoca.groupBy("RFAREA").count().orderBy("RFAREA").show(20, truncate=False)
 
     spark.stop()
     return 0
