@@ -2,23 +2,24 @@
 
 from __future__ import annotations
 
-# (low, high, category)
+# (low, high, category) — ranges align with the 6-digit SAMPLE_GL convention used by
+# the generators (e.g. revenue_tp = "0800000" → 800000 ∈ [800_000, 849_999] = revenue).
 ACCOUNT_RANGES: tuple[tuple[int, int, str], ...] = (
-    (1_000_000, 1_999_999, "cash_banks"),
-    (10_000_000, 19_999_999, "receivables"),
-    (20_000_000, 29_999_999, "inventory"),
-    (30_000_000, 39_999_999, "fixed_assets"),
-    (40_000_000, 49_999_999, "other_assets"),
-    (50_000_000, 59_999_999, "payables"),
-    (60_000_000, 69_999_999, "other_liabilities"),
-    (70_000_000, 79_999_999, "equity"),
-    (80_000_000, 84_999_999, "revenue"),
-    (85_000_000, 89_999_999, "other_income"),
-    (90_000_000, 91_999_999, "cogs"),
-    (92_000_000, 94_999_999, "opex"),
-    (95_000_000, 96_999_999, "ic_charges"),
-    (97_000_000, 98_999_999, "depreciation"),
-    (99_000_000, 99_999_999, "tax_extraordinary"),
+    (10_000, 19_999, "cash_banks"),
+    (100_000, 199_999, "receivables"),
+    (200_000, 299_999, "inventory"),
+    (300_000, 399_999, "fixed_assets"),
+    (400_000, 499_999, "other_assets"),
+    (500_000, 599_999, "payables"),
+    (600_000, 699_999, "other_liabilities"),
+    (700_000, 799_999, "equity"),
+    (800_000, 849_999, "revenue"),
+    (850_000, 899_999, "other_income"),
+    (900_000, 919_999, "cogs"),
+    (920_000, 949_999, "opex"),
+    (950_000, 969_999, "ic_charges"),
+    (970_000, 989_999, "depreciation"),
+    (990_000, 999_999, "tax_extraordinary"),
 )
 
 # Representative GL accounts used by generators (string, SAP-style leading zeros optional)

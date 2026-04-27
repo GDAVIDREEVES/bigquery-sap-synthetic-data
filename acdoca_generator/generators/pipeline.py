@@ -37,12 +37,14 @@ class GenerationConfig:
     ic_pct: Optional[float] = None  # None → industry template ic_share_default
     include_supply_chain: bool = False
     sc_chains_per_period: int = 50
+    include_segment_pl: bool = False
 
 
 @dataclass
 class GenerationResult:
     acdoca_df: DataFrame
     supply_chain_flows_df: Optional[DataFrame] = None
+    segment_pl_df: Optional[DataFrame] = None
 
 
 def _companies_indexed_with_fx(
@@ -224,4 +226,14 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Gen
 
     acc = _fill_tier_defaults(acc, cfg.complexity)
     acc = _null_fields_above_tier(acc, cfg.complexity)
-    return GenerationResult(acdoca_df=acc, supply_chain_flows_df=sc_flows_out)
+
+    seg_pl_out: Optional[DataFrame] = None
+    if cfg.include_segment_pl:
+        from acdoca_generator.aggregations.segment_pl import build_segment_pl
+        seg_pl_out = build_segment_pl(acc, companies)
+
+    return GenerationResult(
+        acdoca_df=acc,
+        supply_chain_flows_df=sc_flows_out,
+        segment_pl_df=seg_pl_out,
+    )

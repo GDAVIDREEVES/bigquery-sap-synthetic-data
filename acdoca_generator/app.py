@@ -151,6 +151,11 @@ def main() -> None:
             value=50,
             disabled=not include_supply_chain,
         )
+        include_segment_pl = st.checkbox(
+            "Compute segment P&L (entity × role × segment × period rollup)",
+            value=False,
+            help="Aggregates ACDOCA into operating-margin views suitable for TP analytics.",
+        )
 
         st.subheader("Validation")
         validation_profile = st.radio(
@@ -178,6 +183,7 @@ def main() -> None:
         validation_profile = pr.validation_profile
         include_supply_chain = bool(pr.include_supply_chain)
         sc_chains_per_period = int(pr.sc_chains_per_period)
+        include_segment_pl = bool(pr.include_segment_pl)
 
     seed = st.number_input("Random seed", min_value=0, value=42, step=1)
 
@@ -226,6 +232,7 @@ def main() -> None:
             seed=int(seed),
             include_supply_chain=bool(include_supply_chain),
             sc_chains_per_period=int(sc_chains_per_period),
+            include_segment_pl=bool(include_segment_pl),
         )
         bar = st.progress(0.0, text="Generating…")
         try:
@@ -316,6 +323,13 @@ def main() -> None:
                 )
             except Exception as ex:  # noqa: BLE001
                 st.warning(f"Could not export supply chain JSON: {ex}")
+
+        if gen_result.segment_pl_df is not None:
+            st.subheader("Segment P&L")
+            pl_df = gen_result.segment_pl_df
+            n_pl = pl_df.count()
+            st.metric("P&L rows", f"{n_pl:,}")
+            st.dataframe(pl_df.limit(200).toPandas(), use_container_width=True)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ class DemoPreset:
     validation_profile: str  # strict | fast
     include_supply_chain: bool = False
     sc_chains_per_period: int = 50
+    include_segment_pl: bool = False
 
 
 DEMO_PRESETS: Dict[str, DemoPreset] = {
