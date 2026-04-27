@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
@@ -22,7 +23,7 @@ from acdoca_generator.config.chart_of_accounts import SAMPLE_GL
 from acdoca_generator.config.industries import canonical_industry_key
 from acdoca_generator.config.materials import Material, materials_for_industry
 from acdoca_generator.config.supply_chain_templates import SupplyChainStep, supply_chain_templates_for_industry
-from acdoca_generator.config.tp_methods import tp_method_for_roles
+from acdoca_generator.config.tp_methods import ROLE_TP_METHOD, tp_method_for_roles
 
 
 def _u32(x: int) -> int:
@@ -30,13 +31,30 @@ def _u32(x: int) -> int:
 
 
 def _pick_markup(seed: int, chain_i: int, step_i: int, buyer_i: int, lo: float, hi: float) -> float:
-    h = _u32(seed ^ _u32(chain_i * 0x9E3779B1) ^ _u32(step_i * 0x85EBCA6B) ^ _u32(buyer_i * 0xC2B2AE35))
-    t = (h % 1_000_000) / 1_000_000.0
+    """Symmetric triangular distribution in [lo, hi] (mode at midpoint).
+
+    Uses sum-of-two-uniforms — better matches benchmarking-study median behavior than
+    a flat uniform draw, which overstates how clean real-world margin data is.
+    """
+    h1 = _u32(seed ^ _u32(chain_i * 0x9E3779B1) ^ _u32(step_i * 0x85EBCA6B) ^ _u32(buyer_i * 0xC2B2AE35))
+    h2 = _u32(h1 * 0xDEADBEEF + chain_i * 0x12345)
+    u1 = (h1 % 1_000_000) / 1_000_000.0
+    u2 = (h2 % 1_000_000) / 1_000_000.0
+    t = (u1 + u2) / 2.0
     return lo + t * (hi - lo)
 
 
-def _poper_i(seed: int, chain_i: int, step_i: int) -> int:
-    return (_u32(seed + chain_i * 17 + step_i * 3) % 12) + 1
+def _chain_start_poper(seed: int, chain_i: int) -> int:
+    """Each chain anchors to one starting period; step events follow sequentially."""
+    return (_u32(seed + chain_i * 17) % 12) + 1
+
+
+def _poper_for_step(seed: int, chain_i: int, step_i: int) -> int:
+    """Step's POPER = min(12, chain_start + step_i). Causal ordering within a chain.
+
+    A chain starting in POPER 11 with 3 steps lands events on 11, 12, 12 (clamp at year-end).
+    """
+    return min(12, _chain_start_poper(seed, chain_i) + step_i)
 
 
 def _role_pools(rows: List[Any]) -> dict[str, List[Any]]:
@@ -458,7 +476,8 @@ def generate_supply_chain_flows(
             si = _u32(seed + chain_i * 19 + step_i * 7) % len(sellers)
             seller = sellers[si]
 
-            if step.dest_role == "LRD" and len(buyers_pool) > 1:
+            should_fanout = step.fanout_all or (step.dest_role == "LRD" and len(buyers_pool) > 1)
+            if should_fanout:
                 buyer_candidates = [b for b in buyers_pool if str(b.RBUKRS) != str(seller.RBUKRS)]
                 if not buyer_candidates:
                     buyer_candidates = list(buyers_pool)
@@ -469,8 +488,10 @@ def generate_supply_chain_flows(
                     buyer = buyers_pool[(bi + 1) % len(buyers_pool)]
                 buyer_candidates = [buyer]
 
-            tp = tp_method_for_roles(step.source_role, step.dest_role)
-            poper_i = _poper_i(seed, chain_i, step_i)
+            tp = ROLE_TP_METHOD.get(step.tp_method_key) if step.tp_method_key else None
+            if tp is None:
+                tp = tp_method_for_roles(step.source_role, step.dest_role)
+            poper_i = _poper_for_step(seed, chain_i, step_i)
             poper_s = str(poper_i).zfill(3)
 
             vol_this = float(v_carry)
@@ -551,7 +572,20 @@ def generate_supply_chain_flows(
     return flows_df, ic_df
 
 
+def _flow_json_default(obj: Any) -> Any:
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, (date, datetime)):
+        return obj.isoformat()
+    raise TypeError(f"unserializable type {type(obj).__name__}")
+
+
 def export_supply_chain_flows_json(flows_df: DataFrame, path: str) -> None:
-    """Write supply chain flows to JSON (records array) for the Dash app."""
-    pdf = flows_df.toPandas()
-    pdf.to_json(path, orient="records", indent=2, date_format="iso")
+    """Write supply chain flows to JSON (records array) for the Dash viewer.
+
+    Avoids ``DataFrame.toPandas()`` so the helper works on Python 3.12, where
+    PySpark 3.5's pandas-conversion path imports the removed-stdlib ``distutils``.
+    """
+    records = [row.asDict(recursive=True) for row in flows_df.collect()]
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(records, f, indent=2, default=_flow_json_default, ensure_ascii=False)

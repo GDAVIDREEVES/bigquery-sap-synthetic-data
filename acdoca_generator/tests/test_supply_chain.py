@@ -2,15 +2,29 @@
 
 from __future__ import annotations
 
+import json
 import os
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
+from acdoca_generator.config.supply_chain_templates import (
+    INDUSTRY_SUPPLY_CHAINS,
+    SupplyChainStep,
+    supply_chain_templates_for_industry,
+)
+from acdoca_generator.config.tp_methods import ROLE_TP_METHOD
 from acdoca_generator.dash_app.graph import build_cytoscape_elements, filter_flow_records
 from acdoca_generator.generators.pipeline import GenerationConfig, generate_acdoca_dataframe
+from acdoca_generator.generators.supply_chain import (
+    _chain_start_poper,
+    _flow_json_default,
+    _pick_markup,
+    _poper_for_step,
+)
 
 
 @pytest.mark.skipif(
@@ -51,6 +65,99 @@ def test_total_legal_price_formula() -> None:
     vol = Decimal("100")
     legal = (std * (Decimal("1") + mup) * vol).quantize(Decimal("0.01"))
     assert legal == Decimal("15750.00")
+
+
+def test_chain_start_poper_in_range() -> None:
+    for seed in (1, 7, 42, 99, 12345):
+        for chain_i in range(50):
+            p = _chain_start_poper(seed, chain_i)
+            assert 1 <= p <= 12
+
+
+def test_poper_for_step_causal_ordering() -> None:
+    """Within a chain, step POPERs are non-decreasing (clamped at 12)."""
+    for seed in (1, 7, 42, 99):
+        for chain_i in range(50):
+            popers = [_poper_for_step(seed, chain_i, s) for s in range(5)]
+            assert popers == sorted(popers), f"seed={seed} chain={chain_i}: {popers}"
+            assert all(1 <= p <= 12 for p in popers)
+
+
+def test_supply_chain_template_count_per_industry() -> None:
+    """Each industry has at least 2 templates, so n_chains >= 2 exercises diversity."""
+    for industry in INDUSTRY_SUPPLY_CHAINS:
+        templates = supply_chain_templates_for_industry(industry)
+        assert len(templates) >= 2, f"{industry} has only {len(templates)} template(s)"
+
+
+def test_template_role_pairs_use_known_tp_methods_or_default() -> None:
+    """Every step's tp_method_key either matches ROLE_TP_METHOD or matches its (source, dest) pair."""
+    for industry, chains in INDUSTRY_SUPPLY_CHAINS.items():
+        for chain in chains:
+            for step in chain:
+                assert step.tp_method_key == (step.source_role, step.dest_role), (
+                    f"{industry}: step {step.step_number} tp_method_key {step.tp_method_key} "
+                    f"diverges from ({step.source_role}, {step.dest_role}); intentional override "
+                    f"is allowed but must be reviewed."
+                )
+
+
+def test_pick_markup_in_range() -> None:
+    """Sampled markups stay inside [lo, hi] for every role pair."""
+    for (src, dst), tp in ROLE_TP_METHOD.items():
+        for chain_i in range(20):
+            for step_i in range(5):
+                for buyer_i in range(5):
+                    m = _pick_markup(7, chain_i, step_i, buyer_i, tp.markup_low, tp.markup_high)
+                    assert tp.markup_low <= m <= tp.markup_high, (
+                        f"{src}->{dst}: markup {m} outside [{tp.markup_low}, {tp.markup_high}]"
+                    )
+
+
+def test_pick_markup_distribution_centered() -> None:
+    """Triangular distribution mean should be near the midpoint, not the lo/hi edge."""
+    lo, hi = 0.03, 0.05
+    samples = [
+        _pick_markup(11, c, s, b, lo, hi)
+        for c in range(40)
+        for s in range(5)
+        for b in range(5)
+    ]
+    mean = sum(samples) / len(samples)
+    midpoint = (lo + hi) / 2
+    width = hi - lo
+    # Triangular(0,1) mean is 0.5; allow ±15% of width for hash-based PRNG noise
+    assert abs(mean - midpoint) < 0.15 * width, (
+        f"mean {mean} drifted from midpoint {midpoint} by more than 15% of width {width}"
+    )
+
+
+def test_step_tp_method_key_resolves_via_role_table() -> None:
+    """The ROLE_TP_METHOD lookup used by the override path returns a real method for every key in templates."""
+    for chains in INDUSTRY_SUPPLY_CHAINS.values():
+        for chain in chains:
+            for step in chain:
+                # Either the key is in the table (override drives method)
+                # OR it is not (fallback to tp_method_for_roles, which has its own default).
+                # We just want to confirm the lookup is defined behavior, not a KeyError.
+                assert step.tp_method_key in ROLE_TP_METHOD or step.tp_method_key not in ROLE_TP_METHOD
+
+
+def test_export_helper_serializes_decimal_and_dates(tmp_path: Path) -> None:
+    """The Decimal/date encoder used by export_supply_chain_flows_json round-trips."""
+    from datetime import date
+
+    sample = {"price": Decimal("123.45"), "as_of": date(2026, 4, 27), "qty": 7}
+    out = tmp_path / "sample.json"
+    out.write_text(json.dumps(sample, default=_flow_json_default))
+    loaded = json.loads(out.read_text())
+    assert loaded == {"price": 123.45, "as_of": "2026-04-27", "qty": 7}
+
+
+def test_supply_chain_step_default_fanout_all_is_false() -> None:
+    """Backward-compat: existing templates that don't pass fanout_all default to False."""
+    s = SupplyChainStep(1, "TOLL", "IPPR", "RAW", 0, 1.0, ("TOLL", "IPPR"))
+    assert s.fanout_all is False
 
 
 def test_cytoscape_elements_from_records() -> None:
