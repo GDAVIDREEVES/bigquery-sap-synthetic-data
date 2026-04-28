@@ -92,8 +92,8 @@ complexity_rb = W.RadioButtons(
     description_tooltip="Field-coverage tier: light ≈ 50 fields populated, very_high ≈ all 538.",
 )
 txn_slider = W.IntSlider(
-    value=200, min=50, max=2000, step=50, description="Txn/CC/period",
-    description_tooltip="Domestic transactions per company code per posting period (12 periods/year).",
+    value=200, min=50, max=5000, step=100, description="Txn/CC/period",
+    description_tooltip="Domestic transactions per company code per posting period (12 periods/year). Total rows ≈ 2 × n_countries × 12 × this value.",
     style={"description_width": "initial"},
 )
 ic_pct_slider = W.FloatSlider(
