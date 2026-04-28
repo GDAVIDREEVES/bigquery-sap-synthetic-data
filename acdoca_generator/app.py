@@ -33,6 +33,14 @@ _SPARK_BQ_PACKAGE = os.environ.get(
     "ACDOCA_SPARK_BQ_PACKAGE",
     "com.google.cloud.spark:spark-3.5-bigquery:0.44.1",
 )
+# GCS Hadoop FileSystem implementation — required for the BigQuery connector
+# to stage temp files through gs://. Without it, write fails with
+# UnsupportedFileSystemException: No FileSystem for scheme "gs". The shaded
+# JAR (zero transitive deps) sidesteps Maven Central resolution flakes.
+_SPARK_GCS_JAR = os.environ.get(
+    "ACDOCA_SPARK_GCS_JAR",
+    os.path.expanduser("~/.spark-jars/gcs-connector-hadoop3-2.2.21-shaded.jar"),
+)
 
 
 def _spark(*, for_bigquery: bool = False) -> SparkSession:
@@ -40,11 +48,16 @@ def _spark(*, for_bigquery: bool = False) -> SparkSession:
         active = SparkSession.getActiveSession()
         if active is not None:
             active.stop()
-        return (
+        builder = (
             SparkSession.builder.appName("ACDOCA_Synthetic_Generator_BQ")
             .config("spark.jars.packages", _SPARK_BQ_PACKAGE)
-            .getOrCreate()
+            .config("spark.hadoop.fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem")
+            .config("spark.hadoop.fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS")
+            .config("spark.hadoop.fs.gs.auth.type", "APPLICATION_DEFAULT")
         )
+        if os.path.exists(_SPARK_GCS_JAR):
+            builder = builder.config("spark.jars", _SPARK_GCS_JAR)
+        return builder.getOrCreate()
     return SparkSession.builder.appName("ACDOCA_Synthetic_Generator").getOrCreate()
 
 

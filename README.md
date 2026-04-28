@@ -125,6 +125,18 @@ Generation logic is unchanged; output goes to BigQuery using the [Spark BigQuery
 - **Credentials**: workload identity on Dataproc, or `GOOGLE_APPLICATION_CREDENTIALS` for local runs.
 - **IAM**: the Spark driver’s identity (e.g. Dataproc cluster service account) needs roles such as **BigQuery Data Editor** on the target dataset (or project) and **Storage Object Admin** (or create/use) on the staging bucket.
 
+### GCS Hadoop connector (required for local-mode Spark)
+
+The Spark BigQuery connector stages temp files via `gs://`, which needs the GCS Hadoop FileSystem implementation on the classpath. On Dataproc this is bundled; for local-mode Spark (laptop, Colab Enterprise default runtime), download the **shaded** GCS connector JAR once:
+
+```bash
+mkdir -p ~/.spark-jars
+curl -L -o ~/.spark-jars/gcs-connector-hadoop3-2.2.21-shaded.jar \
+  https://repo1.maven.org/maven2/com/google/cloud/bigdataoss/gcs-connector/hadoop3-2.2.21/gcs-connector-hadoop3-2.2.21-shaded.jar
+```
+
+Both `scripts/run_generate_bq.py` and the Streamlit app auto-detect this JAR at `~/.spark-jars/gcs-connector-hadoop3-2.2.21-shaded.jar` (overridable via `ACDOCA_SPARK_GCS_JAR`). Without it, BigQuery writes fail with `UnsupportedFileSystemException: No FileSystem for scheme "gs"`. The shaded variant is preferred over `spark.jars.packages` because the unshaded gcs-connector pulls a fragile transitive tree from Maven Central.
+
 ### 1) Create the BigQuery dataset
 
 Edit and run:

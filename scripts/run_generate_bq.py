@@ -31,16 +31,41 @@ _SPARK_BQ_PACKAGE = os.environ.get(
     "ACDOCA_SPARK_BQ_PACKAGE",
     "com.google.cloud.spark:spark-3.5-bigquery:0.44.1",
 )
+# GCS Hadoop FileSystem implementation — required for the BigQuery connector to
+# stage temp files through gs://. Without it, write fails with
+# UnsupportedFileSystemException: No FileSystem for scheme "gs".
+#
+# Use the *shaded* JAR (zero transitive deps) downloaded locally rather than
+# `spark.jars.packages`. The unshaded gcs-connector pulls a fragile transitive
+# tree from Maven Central that fails to resolve on flaky network paths.
+# Default location matches `curl -o ~/.spark-jars/...` from the README.
+_SPARK_GCS_JAR = os.environ.get(
+    "ACDOCA_SPARK_GCS_JAR",
+    os.path.expanduser("~/.spark-jars/gcs-connector-hadoop3-2.2.21-shaded.jar"),
+)
 
 
 def _spark():
     from pyspark.sql import SparkSession
 
-    return (
+    builder = (
         SparkSession.builder.appName("acdoca_generate_bigquery")
         .config("spark.jars.packages", _SPARK_BQ_PACKAGE)
-        .getOrCreate()
+        .config("spark.hadoop.fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem")
+        .config("spark.hadoop.fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS")
+        .config("spark.hadoop.fs.gs.auth.type", "APPLICATION_DEFAULT")
     )
+    if os.path.exists(_SPARK_GCS_JAR):
+        builder = builder.config("spark.jars", _SPARK_GCS_JAR)
+    else:
+        print(
+            f"WARNING: GCS connector JAR not found at {_SPARK_GCS_JAR}. "
+            "Download with: curl -L -o ~/.spark-jars/gcs-connector-hadoop3-2.2.21-shaded.jar "
+            "https://repo1.maven.org/maven2/com/google/cloud/bigdataoss/gcs-connector/"
+            "hadoop3-2.2.21/gcs-connector-hadoop3-2.2.21-shaded.jar",
+            flush=True,
+        )
+    return builder.getOrCreate()
 
 
 def _csv_list(v: str) -> list[str]:
