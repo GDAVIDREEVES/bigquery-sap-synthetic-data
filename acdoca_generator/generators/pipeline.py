@@ -66,76 +66,58 @@ def _companies_indexed_with_fx(
     return companies_df.join(ci_df, "RBUKRS", "inner").join(fx_df, "RBUKRS", "left")
 
 
-def _align_to_schema(df: DataFrame) -> DataFrame:
-    schema = acdoca_schema()
-    out = df
-    for field in schema.fields:
-        if field.name not in out.columns:
-            out = out.withColumn(field.name, F.lit(None).cast(field.dataType))
-    return out.select(*[f.name for f in schema.fields])
+def _tier_default_columns() -> dict[str, "F.Column"]:
+    """Tier-fill defaults: SQL field name → Column expression for `F.coalesce(col, default)`.
+
+    Lazy-built per call (Column refs are cheap; building once in a helper avoids
+    a module-level reference to F.col which would race with pyspark imports).
+    """
+    return {
+        "VORGN": F.lit("RFBU"),
+        "VRGNG": F.lit("RFBU"),
+        "BTTYPE": F.lit(""),
+        "LINETYPE": F.lit(""),
+        "KTOSL": F.lit(""),
+        "MWSKZ": F.lit("V0"),
+        "NETDT": F.col("BUDAT"),
+        "VALUT": F.col("BUDAT"),
+        "SDM_VERSION": F.lit("1"),
+        "RFCCUR": F.col("RHCUR"),
+        "FCSL": F.col("HSL").cast(DecimalType(23, 2)),
+        "RBUNIT": F.lit(""),
+        "RBUPTR": F.lit(""),
+        "RCOMP": F.lit(""),
+        "RITCLG": F.lit(""),
+        "RITEM": F.lit(""),
+        "FKART": F.lit("F2"),
+        "VKORG": F.lit("1000"),
+        "VTWEG": F.lit("10"),
+        "SPART": F.lit("00"),
+        "MATKL_MM": F.lit("GEN"),
+    }
 
 
-def _null_fields_above_tier(df: DataFrame, complexity: str) -> DataFrame:
+def _apply_tier(df: DataFrame, complexity: str) -> DataFrame:
+    """Tier-fill defaults + null-above-tier in one ``select`` (single catalyst node).
+
+    Replaces the prior ``_fill_tier_defaults`` + ``_null_fields_above_tier`` chain,
+    which together produced 250–600 ``withColumn`` ops per call (one per schema
+    field) and exploded the catalyst plan on larger presets.
+    """
     populated = fields_for_complexity(complexity)
     excl = excluded_sql_names()
     schema = acdoca_schema()
-    out = df
+    defaults = _tier_default_columns()
+    select_exprs = []
     for field in schema.fields:
-        if field.name in excl or field.name not in populated:
-            out = out.withColumn(field.name, F.lit(None).cast(field.dataType))
-    return out
-
-
-def _fill_tier_defaults(df: DataFrame, complexity: str) -> DataFrame:
-    """Populate optional reference fields when tier allows (coverage / demos)."""
-    pop = fields_for_complexity(complexity)
-    out = df
-    if "VORGN" in pop:
-        out = out.withColumn("VORGN", F.coalesce(F.col("VORGN"), F.lit("RFBU")))
-    if "VRGNG" in pop:
-        out = out.withColumn("VRGNG", F.coalesce(F.col("VRGNG"), F.lit("RFBU")))
-    if "BTTYPE" in pop:
-        out = out.withColumn("BTTYPE", F.coalesce(F.col("BTTYPE"), F.lit("")))
-    if "LINETYPE" in pop:
-        out = out.withColumn("LINETYPE", F.coalesce(F.col("LINETYPE"), F.lit("")))
-    if "KTOSL" in pop:
-        out = out.withColumn("KTOSL", F.coalesce(F.col("KTOSL"), F.lit("")))
-    if "MWSKZ" in pop:
-        out = out.withColumn("MWSKZ", F.coalesce(F.col("MWSKZ"), F.lit("V0")))
-    if "NETDT" in pop:
-        out = out.withColumn("NETDT", F.coalesce(F.col("NETDT"), F.col("BUDAT")))
-    if "VALUT" in pop:
-        out = out.withColumn("VALUT", F.coalesce(F.col("VALUT"), F.col("BUDAT")))
-    if "SDM_VERSION" in pop:
-        out = out.withColumn("SDM_VERSION", F.coalesce(F.col("SDM_VERSION"), F.lit("1")))
-    if "RFCCUR" in pop:
-        out = out.withColumn("RFCCUR", F.coalesce(F.col("RFCCUR"), F.col("RHCUR")))
-    if "FCSL" in pop:
-        out = out.withColumn(
-            "FCSL",
-            F.coalesce(F.col("FCSL"), F.col("HSL").cast(DecimalType(23, 2))),
-        )
-    if "RBUNIT" in pop:
-        out = out.withColumn("RBUNIT", F.coalesce(F.col("RBUNIT"), F.lit("")))
-    if "RBUPTR" in pop:
-        out = out.withColumn("RBUPTR", F.coalesce(F.col("RBUPTR"), F.lit("")))
-    if "RCOMP" in pop:
-        out = out.withColumn("RCOMP", F.coalesce(F.col("RCOMP"), F.lit("")))
-    if "RITCLG" in pop:
-        out = out.withColumn("RITCLG", F.coalesce(F.col("RITCLG"), F.lit("")))
-    if "RITEM" in pop:
-        out = out.withColumn("RITEM", F.coalesce(F.col("RITEM"), F.lit("")))
-    if "FKART" in pop:
-        out = out.withColumn("FKART", F.coalesce(F.col("FKART"), F.lit("F2")))
-    if "VKORG" in pop:
-        out = out.withColumn("VKORG", F.coalesce(F.col("VKORG"), F.lit("1000")))
-    if "VTWEG" in pop:
-        out = out.withColumn("VTWEG", F.coalesce(F.col("VTWEG"), F.lit("10")))
-    if "SPART" in pop:
-        out = out.withColumn("SPART", F.coalesce(F.col("SPART"), F.lit("00")))
-    if "MATKL_MM" in pop:
-        out = out.withColumn("MATKL_MM", F.coalesce(F.col("MATKL_MM"), F.lit("GEN")))
-    return out
+        name = field.name
+        if name in excl or name not in populated:
+            select_exprs.append(F.lit(None).cast(field.dataType).alias(name))
+        elif name in defaults:
+            select_exprs.append(F.coalesce(F.col(name), defaults[name]).alias(name))
+        else:
+            select_exprs.append(F.col(name))
+    return df.select(*select_exprs)
 
 
 def export_supply_chain_json(flows_df: Optional[DataFrame], path: str) -> None:
@@ -182,7 +164,7 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Gen
             n_comp=n_comp,
         )
         if dom is not None:
-            acc = acc.unionByName(_align_to_schema(dom), allowMissingColumns=True)
+            acc = acc.unionByName(dom)
 
     if n_ic_events > 0:
         icdf = ic_paired_documents(
@@ -195,7 +177,7 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Gen
             n_comp=n_comp,
         )
         if icdf is not None:
-            acc = acc.unionByName(_align_to_schema(icdf), allowMissingColumns=True)
+            acc = acc.unionByName(icdf)
 
     if cfg.include_supply_chain and n_comp >= 2:
         n_chains = max(0, int(cfg.sc_chains_per_period))
@@ -210,7 +192,7 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Gen
             challenged_share=float(cfg.challenged_share),
         )
         if sc_ic is not None:
-            acc = acc.unionByName(_align_to_schema(sc_ic), allowMissingColumns=True)
+            acc = acc.unionByName(sc_ic)
         sc_flows_out = sc_flows
 
     if cfg.include_closing:
@@ -223,13 +205,12 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Gen
             n_comp=n_comp,
         )
         if close is not None:
-            acc = acc.unionByName(_align_to_schema(close), allowMissingColumns=True)
+            acc = acc.unionByName(close)
 
     periv = "V3" if cfg.fiscal_variant == "april" else "K4"
     acc = acc.withColumn("PERIV", F.coalesce(F.col("PERIV"), F.lit(periv)))
 
-    acc = _fill_tier_defaults(acc, cfg.complexity)
-    acc = _null_fields_above_tier(acc, cfg.complexity)
+    acc = _apply_tier(acc, cfg.complexity)
 
     if cfg.include_year_end_trueup and n_comp >= 2:
         from acdoca_generator.generators.year_end_trueup import year_end_trueup_documents
@@ -237,7 +218,7 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Gen
             spark, acc, cidx, cfg.fiscal_year, cfg.seed, cfg.group_currency,
         )
         if tu_df is not None:
-            acc = acc.unionByName(_align_to_schema(tu_df), allowMissingColumns=True)
+            acc = acc.unionByName(tu_df)
 
     seg_pl_out: Optional[DataFrame] = None
     if cfg.include_segment_pl:

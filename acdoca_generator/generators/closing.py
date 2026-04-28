@@ -7,6 +7,7 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import DecimalType, IntegerType, LongType, StringType, StructField, StructType
 
 from acdoca_generator.config.chart_of_accounts import SAMPLE_GL
+from acdoca_generator.utils.schema import align_to_acdoca
 
 _CLOSING_STEPS = ("010", "020", "030", "040", "050", "060", "070")
 
@@ -126,4 +127,4 @@ def closing_balanced_documents(
     for c in ("doc_id", "ci", "ln", "amt", "poper_i", "FX_KSL"):
         if c in out.columns:
             out = out.drop(c)
-    return out
+    return align_to_acdoca(out)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
 from pyspark.sql.types import (
     DateType,
     DecimalType,
@@ -38,3 +40,27 @@ def acdoca_schema() -> StructType:
 
 def ordered_sql_column_names() -> list[str]:
     return [sql for _sap, sql, _t, _s in FIELD_SPECS]
+
+
+def align_to_acdoca(df: DataFrame) -> DataFrame:
+    """Reshape `df` to exactly match `acdoca_schema()`.
+
+    Adds missing columns as typed nulls in a single ``select`` (one catalyst
+    node) instead of per-column ``withColumn`` chains. Drops any extra columns
+    not in the canonical schema. Reorders columns to match the schema.
+
+    Call this once at the end of every generator that contributes to the
+    pipeline accumulator so the orchestrator can ``unionByName`` without
+    per-union re-alignment. Each call here adds ~1 catalyst node to the
+    generator's lazy plan; without this helper, the orchestrator would add
+    538 ``withColumn`` casts per union (~2,000 nodes for a 4-source pipeline).
+    """
+    schema = acdoca_schema()
+    existing = set(df.columns)
+    select_exprs = []
+    for field in schema.fields:
+        if field.name in existing:
+            select_exprs.append(F.col(field.name).cast(field.dataType).alias(field.name))
+        else:
+            select_exprs.append(F.lit(None).cast(field.dataType).alias(field.name))
+    return df.select(*select_exprs)

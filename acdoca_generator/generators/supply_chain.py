@@ -26,6 +26,7 @@ from acdoca_generator.config.industries import canonical_industry_key
 from acdoca_generator.config.materials import Material, materials_for_industry
 from acdoca_generator.config.supply_chain_templates import SupplyChainStep, supply_chain_templates_for_industry
 from acdoca_generator.config.tp_methods import TPMethod, tp_method_for_roles
+from acdoca_generator.utils.schema import align_to_acdoca
 
 
 @dataclass(frozen=True)
@@ -719,7 +720,7 @@ def generate_supply_chain_flows(
 
     flows_df = spark.createDataFrame(flow_tuples, schema=supply_chain_flow_schema())
     ic_df = spark.createDataFrame(ic_rows, schema=sc_ic_document_schema())
-    return flows_df, ic_df
+    return flows_df, align_to_acdoca(ic_df)
 
 
 def _flow_json_default(obj: Any) -> Any:

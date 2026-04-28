@@ -7,6 +7,7 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import DecimalType, StringType
 
 from acdoca_generator.config.chart_of_accounts import SAMPLE_GL
+from acdoca_generator.utils.schema import align_to_acdoca
 
 
 def ic_paired_documents(
@@ -222,4 +223,4 @@ def ic_paired_documents(
     for c in drop_cols:
         if c in out.columns:
             out = out.drop(c)
-    return out
+    return align_to_acdoca(out)

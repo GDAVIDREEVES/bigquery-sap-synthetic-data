@@ -34,6 +34,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, List, Optional
 
+from pyspark import StorageLevel
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
@@ -41,6 +42,7 @@ from acdoca_generator.aggregations.segment_pl import build_segment_pl
 from acdoca_generator.config.chart_of_accounts import SAMPLE_GL
 from acdoca_generator.config.operating_models import ROLE_BY_CODE
 from acdoca_generator.generators.supply_chain import sc_ic_document_schema
+from acdoca_generator.utils.schema import align_to_acdoca
 
 
 _TRUEUP_AWREF_PREFIX = "TU"
@@ -224,18 +226,26 @@ def year_end_trueup_documents(
     if principal is None:
         return None  # nothing to true up against
 
-    # Per-entity full-year op profit and revenue total (sum across POPERs)
-    seg_pl = build_segment_pl(acdoca_df, companies_df)
-    yearly = (
-        seg_pl
-        .filter(F.col("ROLE_CODE") == "LRD")
-        .groupBy("RBUKRS", "ROLE_CODE")
-        .agg(
-            F.sum(F.col("revenue") + F.col("other_income")).alias("rev_y"),
-            F.sum("operating_profit").alias("op_y"),
+    # Persist the upstream accumulator before triggering segment_pl's collect.
+    # Without this, the entire 538-col plan is re-evaluated for each downstream
+    # action; persisting breaks the lineage so Catalyst can optimize each chunk
+    # independently. We unpersist in finally so notebook reruns don't leak.
+    acdoca_df.persist(StorageLevel.MEMORY_AND_DISK)
+    try:
+        # Per-entity full-year op profit and revenue total (sum across POPERs)
+        seg_pl = build_segment_pl(acdoca_df, companies_df)
+        yearly = (
+            seg_pl
+            .filter(F.col("ROLE_CODE") == "LRD")
+            .groupBy("RBUKRS", "ROLE_CODE")
+            .agg(
+                F.sum(F.col("revenue") + F.col("other_income")).alias("rev_y"),
+                F.sum("operating_profit").alias("op_y"),
+            )
+            .collect()
         )
-        .collect()
-    )
+    finally:
+        acdoca_df.unpersist()
     if not yearly:
         return None
 
@@ -276,4 +286,4 @@ def year_end_trueup_documents(
 
     if not rows:
         return None
-    return spark.createDataFrame(rows, schema=sc_ic_document_schema())
+    return align_to_acdoca(spark.createDataFrame(rows, schema=sc_ic_document_schema()))

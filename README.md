@@ -89,6 +89,32 @@ Tests that use the **`spark`** session fixture or shared Spark DataFrame fixture
 
 **Supply chain Spark test:** `test_supply_chain_generates_hops_and_sc_awref` is skipped unless you set `ACDOCA_RUN_SPARK_TESTS=1` (slow; requires Java).
 
+### Verifying the harness
+
+Two reliability gates guard the larger presets:
+
+```bash
+# All 6 presets, full pipeline, no BigQuery write (~1 min on a laptop)
+ACDOCA_RUN_SPARK_TESTS=1 SPARK_DRIVER_MEMORY=4g \
+  pytest -m spark acdoca_generator/tests/test_presets_full_pipeline.py
+
+# Real BigQuery write canary (writes ~30K rows, verifies via `bq query`, drops table)
+ACDOCA_RUN_SPARK_TESTS=1 ACDOCA_RUN_BQ_TESTS=1 \
+  ACDOCA_BQ_TABLE=your-project.your_dataset.canary \
+  ACDOCA_GCS_TEMP_BUCKET=your-staging-bucket \
+  pytest acdoca_generator/tests/test_bq_write_canary.py
+```
+
+Per-preset row counts (post-Phase-A reliability work, MacBook Pro local Spark, `seed=42`):
+
+| Preset | Rows | Local elapsed |
+|---|---|---|
+| `quick_smoke` | 4,800 | ~6 s |
+| `globe_lite` | 29,976 | ~14 s |
+| `tp_workshop` | 73,144 | ~9 s |
+| `supply_chain_demo` | 85,788 | ~10 s |
+| `ml_features` | 97,084 | ~10 s |
+
 **CI**
 
 - [`.github/workflows/ci.yml`](.github/workflows/ci.yml): on push/PR to **`main`**, Python 3.11, **`pip install -e ".[dev,fast]"`**, then **`pytest -m "not spark"`** (no JDK step).

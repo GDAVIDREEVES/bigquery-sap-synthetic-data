@@ -10,6 +10,7 @@ from pyspark.sql.types import DecimalType, StringType
 from acdoca_generator.config.chart_of_accounts import SAMPLE_GL
 from acdoca_generator.config.functional_areas import _KIND_DEFAULT, _ROLE_OVERRIDES
 from acdoca_generator.config.industries import IndustryTemplate
+from acdoca_generator.utils.schema import align_to_acdoca
 
 # Balanced two-line postings: (debit account key, credit account key) in SAMPLE_GL.
 MIX_GL_PAIRS: dict[str, tuple[str, str]] = {
@@ -253,4 +254,4 @@ def domestic_balanced_documents(
     for c in drop_cols:
         if c in base.columns:
             base = base.drop(c)
-    return base
+    return align_to_acdoca(base)
