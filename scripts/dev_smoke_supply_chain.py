@@ -42,7 +42,7 @@ def main() -> int:
 
     cfg = GenerationConfig(
         industry_key="pharmaceutical",
-        country_isos=["US", "DE", "IE", "CH"],
+        country_isos=["US", "DE", "IE", "CH", "GB"],  # +GB so an LRD lands in the run for trueup
         fiscal_year=2025,
         fiscal_variant="calendar",
         complexity="medium",
@@ -55,6 +55,8 @@ def main() -> int:
         include_supply_chain=True,
         sc_chains_per_period=12,
         include_segment_pl=True,
+        include_year_end_trueup=True,
+        challenged_share=0.20,  # exercise controversy tagging
     )
 
     print(f"[smoke] generating with {len(cfg.country_isos)} countries, "
@@ -125,6 +127,25 @@ def main() -> int:
     # TP method distribution
     print("[smoke] TP method distribution:")
     flows.groupBy("TP_METHOD").count().orderBy(F.col("count").desc()).show(truncate=False)
+
+    # AWREF prefix distribution — confirms goods + non-goods flow types are exercised
+    print("[smoke] flow type distribution (by AWREF prefix):")
+    (
+        flows.withColumn("PREFIX", F.col("AWREF").substr(1, 2))
+        .groupBy("PREFIX").count().orderBy("PREFIX").show(truncate=False)
+    )
+
+    # Controversy / APA preview
+    n_apa = flows.filter(F.col("APA_FLAG") == True).count()
+    n_chal = flows.filter(F.col("CHALLENGED_FLAG") == True).count()
+    print(f"[smoke] APA-covered flows: {n_apa}; challenged flows: {n_chal}")
+
+    # Year-end true-up rows
+    tu_lines = acdoca.filter(F.col("AWREF").startswith("TU"))
+    n_tu = tu_lines.count()
+    print(f"[smoke] year-end trueup rows: {n_tu}")
+    if n_tu > 0:
+        tu_lines.select("RBUKRS", "RACCT", "WSL", "BLART", "POPER", "AWREF", "SGTXT").show(20, truncate=False)
 
     # Markup-by-role-pair
     print("[smoke] markup by role pair:")

@@ -35,9 +35,11 @@ class GenerationConfig:
     seed: int
     group_currency: str = "USD"
     ic_pct: Optional[float] = None  # None → industry template ic_share_default
-    include_supply_chain: bool = False
+    include_supply_chain: bool = True
     sc_chains_per_period: int = 50
     include_segment_pl: bool = False
+    include_year_end_trueup: bool = True
+    challenged_share: float = 0.0  # 0.0–1.0; fraction of SC flows tagged as "challenged" by tax authority
 
 
 @dataclass
@@ -45,6 +47,7 @@ class GenerationResult:
     acdoca_df: DataFrame
     supply_chain_flows_df: Optional[DataFrame] = None
     segment_pl_df: Optional[DataFrame] = None
+    entity_roles_df: Optional[DataFrame] = None
 
 
 def _companies_indexed_with_fx(
@@ -204,6 +207,7 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Gen
             cfg.fiscal_year,
             cfg.seed,
             cfg.group_currency,
+            challenged_share=float(cfg.challenged_share),
         )
         if sc_ic is not None:
             acc = acc.unionByName(_align_to_schema(sc_ic), allowMissingColumns=True)
@@ -227,13 +231,25 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Gen
     acc = _fill_tier_defaults(acc, cfg.complexity)
     acc = _null_fields_above_tier(acc, cfg.complexity)
 
+    if cfg.include_year_end_trueup and n_comp >= 2:
+        from acdoca_generator.generators.year_end_trueup import year_end_trueup_documents
+        tu_df = year_end_trueup_documents(
+            spark, acc, cidx, cfg.fiscal_year, cfg.seed, cfg.group_currency,
+        )
+        if tu_df is not None:
+            acc = acc.unionByName(_align_to_schema(tu_df), allowMissingColumns=True)
+
     seg_pl_out: Optional[DataFrame] = None
     if cfg.include_segment_pl:
         from acdoca_generator.aggregations.segment_pl import build_segment_pl
         seg_pl_out = build_segment_pl(acc, companies)
 
+    from acdoca_generator.aggregations.entity_roles import build_entity_roles
+    entity_roles_out = build_entity_roles(companies)
+
     return GenerationResult(
         acdoca_df=acc,
         supply_chain_flows_df=sc_flows_out,
         segment_pl_df=seg_pl_out,
+        entity_roles_df=entity_roles_out,
     )

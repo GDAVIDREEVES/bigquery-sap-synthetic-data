@@ -103,14 +103,14 @@ def test_template_role_pairs_use_known_tp_methods_or_default() -> None:
 
 
 def test_pick_markup_in_range() -> None:
-    """Sampled markups stay inside [lo, hi] for every role pair."""
-    for (src, dst), tp in ROLE_TP_METHOD.items():
+    """Sampled markups stay inside [lo, hi] for every (role pair, transaction type)."""
+    for (src, dst, txn_type), tp in ROLE_TP_METHOD.items():
         for chain_i in range(20):
             for step_i in range(5):
                 for buyer_i in range(5):
                     m = _pick_markup(7, chain_i, step_i, buyer_i, tp.markup_low, tp.markup_high)
                     assert tp.markup_low <= m <= tp.markup_high, (
-                        f"{src}->{dst}: markup {m} outside [{tp.markup_low}, {tp.markup_high}]"
+                        f"{src}->{dst} ({txn_type}): markup {m} outside [{tp.markup_low}, {tp.markup_high}]"
                     )
 
 
@@ -133,14 +133,17 @@ def test_pick_markup_distribution_centered() -> None:
 
 
 def test_step_tp_method_key_resolves_via_role_table() -> None:
-    """The ROLE_TP_METHOD lookup used by the override path returns a real method for every key in templates."""
-    for chains in INDUSTRY_SUPPLY_CHAINS.values():
+    """Every step resolves to a TP method via the (source, dest, txn_type) lookup."""
+    from acdoca_generator.config.tp_methods import tp_method_for_roles
+
+    for industry, chains in INDUSTRY_SUPPLY_CHAINS.items():
         for chain in chains:
             for step in chain:
-                # Either the key is in the table (override drives method)
-                # OR it is not (fallback to tp_method_for_roles, which has its own default).
-                # We just want to confirm the lookup is defined behavior, not a KeyError.
-                assert step.tp_method_key in ROLE_TP_METHOD or step.tp_method_key not in ROLE_TP_METHOD
+                tp = tp_method_for_roles(step.source_role, step.dest_role, step.transaction_type)
+                assert tp is not None, f"{industry}: step {step.step_number} resolved to None"
+                assert tp.markup_low <= tp.markup_high, (
+                    f"{industry}: step {step.step_number} band inverted: {tp.markup_low} > {tp.markup_high}"
+                )
 
 
 def test_export_helper_serializes_decimal_and_dates(tmp_path: Path) -> None:

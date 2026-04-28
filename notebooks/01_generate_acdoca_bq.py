@@ -63,7 +63,7 @@ ic_pct_raw = _get_param("ic_pct", "0.25")
 include_reversals = _get_param_bool("include_reversals", True)
 include_closing = _get_param_bool("include_closing", True)
 seed = _get_param_int("seed", 42)
-include_supply_chain = _get_param_bool("include_supply_chain", False)
+include_supply_chain = _get_param_bool("include_supply_chain", True)
 sc_chains_per_period = _get_param_int("sc_chains_per_period", 50)
 
 full_table_name = _get_param("full_table_name", "my-gcp-project.synthetic_acdoca.journal_entries")

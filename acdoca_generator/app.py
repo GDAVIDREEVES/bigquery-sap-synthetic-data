@@ -78,8 +78,9 @@ def main() -> None:
     rev = None
     closing = None
     validation_profile = "strict"
-    include_supply_chain = False
+    include_supply_chain = True
     sc_chains_per_period = 50
+    challenged_share = 0.0
 
     if preset_choice == "custom":
         st.subheader("Industry template")
@@ -141,7 +142,7 @@ def main() -> None:
         closing = st.checkbox("Include closing entries", value=True)
         include_supply_chain = st.checkbox(
             "Include financial supply chain (multi-hop IC + flow table)",
-            value=False,
+            value=True,
             help="Adds synthetic supply-chain hops and paired IC lines. Export JSON for the Dash viewer.",
         )
         sc_chains_per_period = st.slider(
@@ -184,6 +185,7 @@ def main() -> None:
         include_supply_chain = bool(pr.include_supply_chain)
         sc_chains_per_period = int(pr.sc_chains_per_period)
         include_segment_pl = bool(pr.include_segment_pl)
+        challenged_share = float(pr.challenged_share)
 
     seed = st.number_input("Random seed", min_value=0, value=42, step=1)
 
@@ -233,6 +235,7 @@ def main() -> None:
             include_supply_chain=bool(include_supply_chain),
             sc_chains_per_period=int(sc_chains_per_period),
             include_segment_pl=bool(include_segment_pl),
+            challenged_share=float(challenged_share),
         )
         bar = st.progress(0.0, text="Generating…")
         try:
@@ -330,6 +333,42 @@ def main() -> None:
             n_pl = pl_df.count()
             st.metric("P&L rows", f"{n_pl:,}")
             st.dataframe(pl_df.limit(200).toPandas(), use_container_width=True)
+
+        if gen_result.entity_roles_df is not None:
+            st.subheader("Entity roles (master-file metadata)")
+            er_df = gen_result.entity_roles_df
+            st.caption(
+                "Per-entity TP role flags — IS_PRINCIPAL, IS_IP_OWNER, IS_FINANCING_ARM, etc. "
+                "Use this table to discover the principal / IP owner / financing arm without parsing flow rows."
+            )
+            st.dataframe(er_df.toPandas(), use_container_width=True)
+
+        # Year-end true-up summary
+        tu_lines = df.filter(F.col("AWREF").startswith("TU"))
+        n_tu = tu_lines.count()
+        if n_tu > 0:
+            st.subheader("Year-end true-up adjustments")
+            st.caption(
+                f"{n_tu} TU rows posted in Q4 (BLART='SA' manual journals). "
+                "These bring LRD operating margins into the target band."
+            )
+            st.dataframe(tu_lines.limit(50).toPandas(), use_container_width=True)
+
+        # Controversy / APA preview from supply_chain_flows_df
+        if gen_result.supply_chain_flows_df is not None:
+            sc_df = gen_result.supply_chain_flows_df
+            n_apa = sc_df.filter(F.col("APA_FLAG") == True).count()
+            n_challenged = sc_df.filter(F.col("CHALLENGED_FLAG") == True).count()
+            if n_apa > 0 or n_challenged > 0:
+                st.subheader("Controversy / APA scenarios")
+                st.metric("APA-covered flows", n_apa)
+                st.metric("Challenged flows", n_challenged)
+                if n_challenged > 0:
+                    st.caption("Flows tagged with a tax authority's adjusted-view recharacterization.")
+                    st.dataframe(
+                        sc_df.filter(F.col("CHALLENGED_FLAG") == True).limit(50).toPandas(),
+                        use_container_width=True,
+                    )
 
 
 if __name__ == "__main__":

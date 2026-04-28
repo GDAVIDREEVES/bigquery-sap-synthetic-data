@@ -34,6 +34,7 @@ SAMPLE_GL: dict[str, str] = {
     "revenue_tp": "0800000",
     "revenue_service": "0810000",
     "revenue_ic": "0820000",
+    "revenue_royalty": "0855000",  # other_income range (850k–899k); royalty income at IP-owning principal
     "cogs": "0900000",
     "cogs_ic": "0910000",
     "opex_rd": "0925000",

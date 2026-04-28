@@ -72,8 +72,8 @@ def main() -> int:
     p.add_argument(
         "--include-supply-chain",
         action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Add financial supply-chain hops (custom preset only; supply_chain_demo preset enables by default)",
+        default=True,
+        help="Add financial supply-chain hops (custom preset only; pass --no-include-supply-chain to disable)",
     )
     p.add_argument(
         "--sc-chains",

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, List, Optional, Tuple
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.types import (
+    BooleanType,
     DateType,
     DecimalType,
     IntegerType,
@@ -23,7 +25,78 @@ from acdoca_generator.config.chart_of_accounts import SAMPLE_GL
 from acdoca_generator.config.industries import canonical_industry_key
 from acdoca_generator.config.materials import Material, materials_for_industry
 from acdoca_generator.config.supply_chain_templates import SupplyChainStep, supply_chain_templates_for_industry
-from acdoca_generator.config.tp_methods import ROLE_TP_METHOD, tp_method_for_roles
+from acdoca_generator.config.tp_methods import TPMethod, tp_method_for_roles
+
+
+@dataclass(frozen=True)
+class LegSpec:
+    """GL routing for the four lines of an IC document, per transaction type.
+
+    Naming follows the doc shape: lines 1-2 sit at the buyer (DR expense/asset,
+    CR ap_ic), lines 3-4 sit at the seller (DR ar_ic, CR revenue/income).
+    """
+    buyer_dr_acct: str
+    buyer_cr_acct: str
+    seller_dr_acct: str
+    seller_cr_acct: str
+    seller_cr_rfarea: str          # RFAREA on the seller's revenue line (drives segment_pl bucket)
+    populate_goods_fields: bool    # True → MATNR/WERKS/RUNIT/MSL populated; False → blanked
+
+
+_LEGSPEC_GOODS = LegSpec(
+    buyer_dr_acct=SAMPLE_GL["inventory_fg"],
+    buyer_cr_acct=SAMPLE_GL["ap_ic"],
+    seller_dr_acct=SAMPLE_GL["ar_ic"],
+    seller_cr_acct=SAMPLE_GL["revenue_ic"],
+    seller_cr_rfarea="0200",
+    populate_goods_fields=True,
+)
+
+_LEGSPEC_ROYALTY = LegSpec(
+    buyer_dr_acct=SAMPLE_GL["royalty_exp"],
+    buyer_cr_acct=SAMPLE_GL["ap_ic"],
+    seller_dr_acct=SAMPLE_GL["ar_ic"],
+    seller_cr_acct=SAMPLE_GL["revenue_royalty"],
+    seller_cr_rfarea="0500",  # Marketing — royalty income classified under brand/IP commercialization
+    populate_goods_fields=False,
+)
+
+_LEGSPEC_SERVICE = LegSpec(
+    buyer_dr_acct=SAMPLE_GL["ic_service_exp"],
+    buyer_cr_acct=SAMPLE_GL["ap_ic"],
+    seller_dr_acct=SAMPLE_GL["ar_ic"],
+    seller_cr_acct=SAMPLE_GL["revenue_service"],
+    seller_cr_rfarea="0300",  # Administration — IC service / mgmt fee
+    populate_goods_fields=False,
+)
+
+_LEGSPEC_COST_SHARE = LegSpec(
+    buyer_dr_acct=SAMPLE_GL["opex_rd"],
+    buyer_cr_acct=SAMPLE_GL["ap_ic"],
+    seller_dr_acct=SAMPLE_GL["ar_ic"],
+    seller_cr_acct=SAMPLE_GL["revenue_ic"],
+    seller_cr_rfarea="0400",  # R&D — cost-share recharge offset
+    populate_goods_fields=False,
+)
+
+_LEGSPECS: dict[str, LegSpec] = {
+    "goods": _LEGSPEC_GOODS,
+    "royalty": _LEGSPEC_ROYALTY,
+    "service": _LEGSPEC_SERVICE,
+    "cost_share": _LEGSPEC_COST_SHARE,
+}
+
+_AWREF_PREFIX: dict[str, str] = {
+    "goods": "SC",
+    "royalty": "RY",
+    "service": "SV",
+    "cost_share": "CS",
+}
+
+
+def legspec_for(transaction_type: str) -> LegSpec:
+    """Return the LegSpec for a transaction_type, defaulting to goods on unknown."""
+    return _LEGSPECS.get(transaction_type, _LEGSPEC_GOODS)
 
 
 def _u32(x: int) -> int:
@@ -182,6 +255,9 @@ def supply_chain_flow_schema() -> StructType:
             StructField("BUYER_ROLE", StringType(), True),
             StructField("SELLER_LAND1", StringType(), True),
             StructField("BUYER_LAND1", StringType(), True),
+            StructField("APA_FLAG", BooleanType(), True),
+            StructField("CHALLENGED_FLAG", BooleanType(), True),
+            StructField("ADJUSTED_VIEW_PRICE", DecimalType(23, 2), True),
         ]
     )
 
@@ -290,13 +366,25 @@ def _four_ic_rows_for_hop(
     seed: int,
     event_key: int,
     group_currency: str,
-    mat: Material,
+    mat: Optional[Material],
     werks: str,
     awref: str,
     chain_id: str,
     step_number: int,
+    legspec: LegSpec = _LEGSPEC_GOODS,
+    transaction_type: str = "goods",
 ) -> List[dict[str, Any]]:
-    """Buyer = company A (inventory), Seller = company B (revenue). amt > 0."""
+    """Emit the 4 paired IC lines for one buyer/seller hop.
+
+    Buyer takes line 1 (DR — inventory for goods, expense for non-goods)
+    and line 2 (CR ap_ic). Seller takes line 3 (DR ar_ic) and line 4
+    (CR — revenue/income). All four share the same WSL magnitude so the
+    document nets to 0.
+
+    For non-goods flows (`legspec.populate_goods_fields=False`), MATNR /
+    WERKS / RUNIT / MSL are blanked on every line — those fields only have
+    SAP-side meaning for material movements.
+    """
     b_bukrs = str(buyer.RBUKRS)
     s_bukrs = str(seller.RBUKRS)
     b_fx = float(buyer.FX_KSL)
@@ -304,9 +392,16 @@ def _four_ic_rows_for_hop(
     buyer_belnr = str(6_000_000_000 + (event_key % 3_999_000_000)).zfill(10)
     seller_belnr = str(int(buyer_belnr) + 1).zfill(10)
     ts = datetime.fromtimestamp((event_key % 100_000_000) + seed * 1000)
-    sgtxt = f"SC {chain_id} step {step_number} {mat.matnr}"
-    runit = mat.unit
-    msl_dec = amt / Decimal(str(mat.standard_cost)) if mat.standard_cost > 0 else None
+
+    is_goods = legspec.populate_goods_fields
+    matnr_val = mat.matnr if (is_goods and mat is not None) else ""
+    runit_val = mat.unit if (is_goods and mat is not None) else ""
+    werks_seller_leg = werks if is_goods else ""
+    msl_dec: Optional[Decimal] = None
+    if is_goods and mat is not None and mat.standard_cost > 0:
+        msl_dec = amt / Decimal(str(mat.standard_cost))
+    label = matnr_val if is_goods else transaction_type.upper()
+    sgtxt = f"{transaction_type.upper()} {chain_id} step {step_number} {label}".strip()
 
     rows: List[dict[str, Any]] = []
     rows.append(
@@ -322,7 +417,7 @@ def _four_ic_rows_for_hop(
             fx_ksl=b_fx,
             partner_bukrs=s_bukrs,
             partner_prctr=str(seller.PRCTR),
-            racct=SAMPLE_GL["inventory_fg"],
+            racct=legspec.buyer_dr_acct,
             rfarea="",
             wsl=amt,
             gjahr=gjahr,
@@ -332,10 +427,10 @@ def _four_ic_rows_for_hop(
             usnam="SYNTH_SC",
             ts=ts,
             sgtxt=sgtxt,
-            matnr=mat.matnr,
-            werks=werks,
+            matnr=matnr_val,
+            werks=werks_seller_leg,
             awref=awref,
-            runit=runit,
+            runit=runit_val,
             msl=msl_dec,
             line_one=True,
         )
@@ -353,7 +448,7 @@ def _four_ic_rows_for_hop(
             fx_ksl=b_fx,
             partner_bukrs=s_bukrs,
             partner_prctr=str(seller.PRCTR),
-            racct=SAMPLE_GL["ap_ic"],
+            racct=legspec.buyer_cr_acct,
             rfarea="",
             wsl=-amt,
             gjahr=gjahr,
@@ -363,10 +458,10 @@ def _four_ic_rows_for_hop(
             usnam="SYNTH_SC",
             ts=ts,
             sgtxt=sgtxt,
-            matnr=mat.matnr,
+            matnr=matnr_val,
             werks="",
             awref=awref,
-            runit=runit,
+            runit=runit_val,
             msl=None,
             line_one=False,
         )
@@ -384,7 +479,7 @@ def _four_ic_rows_for_hop(
             fx_ksl=s_fx,
             partner_bukrs=b_bukrs,
             partner_prctr=str(buyer.PRCTR),
-            racct=SAMPLE_GL["ar_ic"],
+            racct=legspec.seller_dr_acct,
             rfarea="",
             wsl=amt,
             gjahr=gjahr,
@@ -394,10 +489,10 @@ def _four_ic_rows_for_hop(
             usnam="SYNTH_SC",
             ts=ts,
             sgtxt=sgtxt,
-            matnr=mat.matnr,
-            werks=werks,
+            matnr=matnr_val,
+            werks=werks_seller_leg,
             awref=awref,
-            runit=runit,
+            runit=runit_val,
             msl=None,
             line_one=True,
         )
@@ -415,8 +510,8 @@ def _four_ic_rows_for_hop(
             fx_ksl=s_fx,
             partner_bukrs=b_bukrs,
             partner_prctr=str(buyer.PRCTR),
-            racct=SAMPLE_GL["revenue_ic"],
-            rfarea="0200",
+            racct=legspec.seller_cr_acct,
+            rfarea=legspec.seller_cr_rfarea,
             wsl=-amt,
             gjahr=gjahr,
             poper_i=poper_i,
@@ -425,10 +520,10 @@ def _four_ic_rows_for_hop(
             usnam="SYNTH_SC",
             ts=ts,
             sgtxt=sgtxt,
-            matnr=mat.matnr,
+            matnr=matnr_val,
             werks="",
             awref=awref,
-            runit=runit,
+            runit=runit_val,
             msl=None,
             line_one=False,
         )
@@ -444,9 +539,16 @@ def generate_supply_chain_flows(
     gjahr: int,
     seed: int,
     group_currency: str,
+    challenged_share: float = 0.0,
 ) -> Tuple[Optional[DataFrame], Optional[DataFrame]]:
     """
     Build supply chain hop rows and paired IC ACDOCA-style rows.
+
+    `challenged_share` (0.0–1.0) tags that fraction of flows as "challenged"
+    by a tax authority — populating CHALLENGED_FLAG and ADJUSTED_VIEW_PRICE on
+    the flow row (not on the IC ACDOCA rows; the controversy is a metadata
+    overlay, not a posted journal entry). Tagging is deterministic by seed.
+
     Returns (flows_df, ic_df) or (None, None) if not enough companies or n_chains <= 0.
     """
     if n_chains <= 0:
@@ -495,9 +597,15 @@ def generate_supply_chain_flows(
                     buyer = buyers_pool[(bi + 1) % len(buyers_pool)]
                 buyer_candidates = [buyer]
 
-            tp = ROLE_TP_METHOD.get(step.tp_method_key) if step.tp_method_key else None
-            if tp is None:
-                tp = tp_method_for_roles(step.source_role, step.dest_role)
+            tp = tp_method_for_roles(step.source_role, step.dest_role, step.transaction_type)
+            # APA-covered steps use the tighter declared band (typically lower / pre-agreed)
+            # instead of the role-pair-derived band. Other downstream behavior is unchanged.
+            if step.apa_flag and step.apa_markup_band is not None:
+                apa_lo, apa_hi = step.apa_markup_band
+                tp = TPMethod(
+                    code=tp.code + "/APA", description=tp.description + " (APA)",
+                    markup_low=apa_lo, markup_high=apa_hi,
+                )
             poper_i = _poper_for_step(seed, chain_i, step_i)
             poper_s = str(poper_i).zfill(3)
 
@@ -511,6 +619,9 @@ def generate_supply_chain_flows(
             if not buyer_candidates:
                 break
 
+            legspec = legspec_for(step.transaction_type)
+            awref_prefix = _AWREF_PREFIX.get(step.transaction_type, "SC")
+
             n_buyers = len(buyer_candidates)
             for bi, buyer in enumerate(buyer_candidates):
                 vol = vol_this / n_buyers if n_buyers else vol_this
@@ -518,17 +629,44 @@ def generate_supply_chain_flows(
                 std = Decimal(str(mat.standard_cost))
                 mup = Decimal(str(markup))
                 vol_dec = Decimal(str(round(vol, 6)))
-                legal = (std * (Decimal("1") + mup) * vol_dec).quantize(Decimal("0.01"))
 
-                awref = f"SC{chain_i * 10_000 + step_i * 100 + bi:09d}"
-                werks = f"P{str(seller.RBUKRS)}"
+                # Legal amount formula varies by transaction_type:
+                #   goods    : cost × (1 + markup) × volume
+                #   service  : same shape (cost-plus on a service cost base)
+                #   royalty  : base × rate (no `1 +`); rate sourced from step or markup band
+                #   cost_share : base × pool_share (recharge at-cost; markup band ≈ 0)
+                if step.transaction_type == "royalty":
+                    rate = Decimal(str(step.royalty_rate)) if step.royalty_rate is not None else mup
+                    legal = (std * vol_dec * rate).quantize(Decimal("0.01"))
+                elif step.transaction_type == "cost_share":
+                    share = Decimal(str(step.cost_pool_share)) if step.cost_pool_share is not None else Decimal("1.0")
+                    legal = (std * vol_dec * share).quantize(Decimal("0.01"))
+                else:  # goods, service, or unknown → cost-plus shape
+                    legal = (std * (Decimal("1") + mup) * vol_dec).quantize(Decimal("0.01"))
+
+                awref = f"{awref_prefix}{chain_i * 10_000 + step_i * 100 + bi:09d}"
+                werks = f"P{str(seller.RBUKRS)}" if legspec.populate_goods_fields else ""
+                matnr_for_flow = mat.matnr if legspec.populate_goods_fields else ""
+
+                # Controversy tagging — deterministic by seed/chain/step/buyer.
+                # CHALLENGED flows get a 15-30% adjusted-view uplift representing a
+                # tax authority's recharacterization. APA flows are never challenged.
+                challenged = False
+                adjusted_view: Optional[Decimal] = None
+                if challenged_share > 0.0 and not step.apa_flag:
+                    h = _u32(seed ^ _u32(chain_i * 0xA5A5) ^ _u32(step_i * 0x5A5A) ^ _u32(bi * 0xC3C3))
+                    if (h % 1_000_000) / 1_000_000.0 < challenged_share:
+                        challenged = True
+                        h2 = _u32(h * 0xDEADBEEF + chain_i * 7919)
+                        uplift_pct = 0.15 + ((h2 % 1_000_000) / 1_000_000.0) * 0.15  # 15–30%
+                        adjusted_view = (legal * (Decimal("1") + Decimal(str(uplift_pct)))).quantize(Decimal("0.01"))
 
                 flow_tuples.append(
                     (
                         chain_id,
                         step.step_number,
                         step.material_type,
-                        mat.matnr,
+                        matnr_for_flow,
                         ip_owner,
                         str(seller.RBUKRS),
                         str(buyer.RBUKRS),
@@ -547,6 +685,9 @@ def generate_supply_chain_flows(
                         step.dest_role,
                         str(seller.LAND1),
                         str(buyer.LAND1),
+                        bool(step.apa_flag),
+                        bool(challenged),
+                        adjusted_view,
                     )
                 )
 
@@ -565,6 +706,8 @@ def generate_supply_chain_flows(
                         awref=awref,
                         chain_id=chain_id,
                         step_number=step.step_number,
+                        legspec=legspec,
+                        transaction_type=step.transaction_type,
                     )
                 )
                 event_counter += 1

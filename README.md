@@ -96,6 +96,24 @@ Tests that use the **`spark`** session fixture or shared Spark DataFrame fixture
 
 **Performance note:** The Spark pipeline is optimized for **distributed** runs; on tiny local/CI data volumes, **JVM and job startup** dominate. The Polars **`core`** path is intended for fast iteration; production writes to Delta/BigQuery still use Spark as today.
 
+## Local Spark gotchas
+
+First-run Spark friction usually traces to one of these. Set them before any `pytest -m spark` or local generation:
+
+```bash
+# Default 1g driver heap OOMs even on tiny generations during shuffle.
+export SPARK_DRIVER_MEMORY=4g
+
+# Without this, workers spawn the system Python (often 3.9) and fail with
+# PYTHON_VERSION_MISMATCH against the driver's venv interpreter.
+export PYSPARK_PYTHON="$(which python)"
+
+# Spark binds to hostname; resolution can be flaky on CI runners and laptops.
+export SPARK_LOCAL_IP=127.0.0.1
+```
+
+**Python version:** Project supports Python 3.10+. The Py3.12 `toPandas`/`distutils` issue in the in-repo supply-chain JSON exporter is fixed (commit `10d642e`). Spark 3.5 ecosystem is most stable on **Python 3.11**; if you hit obscure JVM-side errors on 3.12, try a 3.11 venv first.
+
 ## Google BigQuery (PySpark + connector)
 
 Generation logic is unchanged; output goes to BigQuery using the [Spark BigQuery connector](https://github.com/GoogleCloudDataproc/spark-bigquery-connector) (default Maven coordinate: `com.google.cloud.spark:spark-3.5-bigquery:0.44.1`, overridable with `ACDOCA_SPARK_BQ_PACKAGE`).

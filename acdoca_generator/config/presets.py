@@ -20,9 +20,10 @@ class DemoPreset:
     include_reversals: bool
     include_closing: bool
     validation_profile: str  # strict | fast
-    include_supply_chain: bool = False
+    include_supply_chain: bool = True
     sc_chains_per_period: int = 50
     include_segment_pl: bool = False
+    challenged_share: float = 0.0
 
 
 DEMO_PRESETS: Dict[str, DemoPreset] = {
@@ -39,6 +40,7 @@ DEMO_PRESETS: Dict[str, DemoPreset] = {
         include_reversals=True,
         include_closing=False,
         validation_profile="fast",
+        include_supply_chain=False,
     ),
     "tp_workshop": DemoPreset(
         key="tp_workshop",
@@ -97,6 +99,24 @@ DEMO_PRESETS: Dict[str, DemoPreset] = {
         validation_profile="strict",
         include_supply_chain=True,
         sc_chains_per_period=50,
+    ),
+    "controversy_demo": DemoPreset(
+        key="controversy_demo",
+        label="Controversy / APA scenarios",
+        industry_key="pharmaceutical",
+        country_isos_csv="US,DE,CH,IE,IN,GB",
+        fiscal_year=2026,
+        fiscal_variant="calendar",
+        complexity="medium",
+        txn_per_cc_per_period=500,
+        ic_pct=0.30,
+        include_reversals=True,
+        include_closing=True,
+        validation_profile="strict",
+        include_supply_chain=True,
+        sc_chains_per_period=40,
+        include_segment_pl=True,
+        challenged_share=0.20,  # 20% of flows tagged as challenged by tax authority
     ),
 }
 
