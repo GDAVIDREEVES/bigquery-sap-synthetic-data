@@ -1,5 +1,14 @@
 # Supply chain realism review — 2026-04-27
 
+> **Status update (2026-04-27 same-day):** All workstream-A and workstream-B
+> items from this diagnostic are now addressed. See commit `bd61e51`
+> (non-goods IC flows + year-end true-up + controversy/APA + entity roles).
+> Items still open: Missing #4 (CbCR/Pillar Two — workstream C, deferred)
+> and Missing #7 / Bugs #3 (Polars fast path for IC + SC — workstream D,
+> explicitly deprioritized by project north star). Status table at the
+> bottom of this file lists per-item resolution.
+
+
 Smoke-tested the financial supply chain feature merged on 2026-04-05. Goal: confirm the
 output is realistic enough to feed an **operational transfer pricing solution** built on
 top of it. This is a TP-analyst lens, not a structural validator's lens.
@@ -152,3 +161,29 @@ investment is:
 - This file: [`diagnostics/sc-realism-2026-04-27.md`](sc-realism-2026-04-27.md)
 
 No production code modified.
+
+---
+
+## Resolution status (2026-04-27 end-of-day)
+
+| Section | # | Item | Status | Evidence |
+|---|---|---|---|---|
+| Weak | 1 | One template per industry | ✅ Done (prior) | 2 templates per industry; pharma now 5 (+royalty/service/cost-share/APA) |
+| Weak | 2 | Single buyer per hop | ✅ Done (prior) | `fanout_all` flag |
+| Weak | 3 | Period clumping | ✅ Done (prior) | chain_start_poper anchored, monotonic step periods |
+| Weak | 4 | No TP method variation per role pair | ✅ Done | `ROLE_TP_METHOD` re-keyed to `(seller, buyer, txn_type)` with goods fallback |
+| Weak | 5 | Uniform markup distribution | ✅ Done (prior) | Triangular distribution |
+| Weak | 6 | TOLL ignores industry context | ✅ Done (prior) | Per-industry templates |
+| Weak | 7 | No royalty/service/cost-share flows | ✅ Done | New `transaction_type` discriminator + `LegSpec` factory; AWREF prefixes RY/SV/CS |
+| Weak | 8 | `include_supply_chain` off by default | ✅ Done | Default flipped to True (`quick_smoke` opts out) |
+| Missing | 1 | Segment-level P&Ls | ✅ Done (prior) | `aggregations/segment_pl.py` |
+| Missing | 2 | Year-end true-up adjustments | ✅ Done | New `generators/year_end_trueup.py`; Q4 paired JEs at LRD↔IPPR with BLART="SA", AWREF "TU" |
+| Missing | 3 | Royalty / IP licensing flows | ✅ Done | `transaction_type="royalty"` + `revenue_royalty` GL; lands in `other_income` segment_pl bucket |
+| Missing | 4 | CbCR / Pillar Two aggregation | 🔲 Out of scope | Deferred to workstream C |
+| Missing | 5 | Master-file structure metadata | ✅ Done | New `aggregations/entity_roles.py` exposes IS_PRINCIPAL / IS_IP_OWNER / IS_FINANCING_ARM / etc. flags |
+| Missing | 6 | Controversy / APA scenarios | ✅ Done | `apa_flag`+`apa_markup_band` on SupplyChainStep; APA_FLAG/CHALLENGED_FLAG/ADJUSTED_VIEW_PRICE on flow schema; `controversy_demo` preset; `challenged_share` config |
+| Missing | 7 | Volume realism / Polars IC+SC | 🔲 Out of scope | Deferred to workstream D (north star deprioritizes performance over scenario realism) |
+| Bugs | 1 | Py3.12 `toPandas` crash | ✅ Done (prior) | `Row.asDict()` fallback in export helper |
+| Bugs | 2 | Spark heap default friction | ✅ Done | README "Local Spark gotchas" section documents `SPARK_DRIVER_MEMORY=4g` |
+| Bugs | 3 | `cidx.collect()` bottleneck | 🔲 Out of scope | Deferred to workstream D |
+| Bugs | 4 | `PYSPARK_PYTHON` not surfaced | ✅ Done | README "Local Spark gotchas" documents the env var |
