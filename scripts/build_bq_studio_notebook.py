@@ -46,6 +46,16 @@ Interactive form for the synthetic SAP ACDOCA generator. Fill in the widgets, cl
 - A GCS bucket for the Spark BigQuery connector's staging files
 - IAM: `roles/bigquery.dataEditor`, `roles/bigquery.jobUser`, `roles/dataproc.editor`, plus `objectAdmin` on the staging bucket (or `roles/owner` for the whole project)
 
+## Runtime selection
+
+The default BQ Studio runtime (Colab Enterprise) reliably runs presets up to ~150–250K rows. Larger runs (`ml_features`, `tp_workshop` at high txn/cc, custom configs above ~250K) JVM-crash with `ConnectionRefusedError` or `Py4JNetworkError` — heap exhaustion, not a bug.
+
+For real-volume runs, switch runtimes. See [docs/runtime-options.md](../docs/runtime-options.md) for the decision matrix:
+
+- **BQ Studio default** — small runs, the form, default runtime. Fine for `quick_smoke`, `globe_lite`.
+- **Vertex AI Workbench** (`n1-standard-8`, ~$0.40/hr running) — same notebook form on a 30 GB / 8 vCPU VM. Handles every preset and most custom configs up to ~1M rows. Provision once via [`scripts/provision_vertex_workbench.sh`](../scripts/provision_vertex_workbench.sh).
+- **Laptop CLI** ([`scripts/run_generate_bq.py`](../scripts/run_generate_bq.py)) — no form, but unlimited heap. Best for the largest runs and CI batches.
+
 ## Notes
 
 - **Repo source** — this notebook clones `https://github.com/GDAVIDREEVES/bigquery-sap-synthetic-data.git` (public). Push your local changes first (`git push origin main`) so the notebook gets the latest code on the next *Run all*.

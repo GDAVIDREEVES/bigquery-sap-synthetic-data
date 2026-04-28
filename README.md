@@ -185,6 +185,32 @@ python scripts/run_generate_bq.py \
 
 Use `--help` for all flags. Parameters match the PySpark notebook and Streamlit UI (see table below). Override the connector package with `ACDOCA_SPARK_BQ_PACKAGE` if your Spark version differs.
 
+#### Larger runs (`ml_features` and beyond)
+
+The CLI is the most reliable path for high-volume runs — no form, but no JVM-heap ceiling beyond what your laptop has. Bump driver memory and override the connector to suit your scale:
+
+```bash
+SPARK_DRIVER_MEMORY=8g python3 scripts/run_generate_bq.py \
+  --preset ml_features \
+  --full-table-name acdoca-synthetic-greg.synthetic_acdoca.journal_entries
+```
+
+For ~1M-row custom configs:
+
+```bash
+SPARK_DRIVER_MEMORY=8g python3 scripts/run_generate_bq.py \
+  --preset custom \
+  --industry-key pharmaceutical \
+  --country-isos US,DE,CH,IE,IN,FR,GB,JP,IT,ES \
+  --complexity very_high \
+  --txn-per-cc-per-period 3500 \
+  --ic-pct 0.35 \
+  --sc-chains 100 \
+  --full-table-name acdoca-synthetic-greg.synthetic_acdoca.journal_entries
+```
+
+For runtime-selection guidance (BQ Studio default vs Vertex AI Workbench vs laptop CLI), see [`docs/runtime-options.md`](docs/runtime-options.md).
+
 ### 3) Notebook on Dataproc / Vertex Workbench
 
 - [`notebooks/01_generate_acdoca_bq.py`](notebooks/01_generate_acdoca_bq.py) is a parameterized PySpark notebook that writes with `output_format=bigquery`. Ensure the cluster or session has the Spark BigQuery connector JAR (e.g. Dataproc image that supports `spark-3.5-bigquery`, or `spark.jars.packages` as in `scripts/run_generate_bq.py`).
