@@ -103,6 +103,11 @@ def _apply_tier(df: DataFrame, complexity: str) -> DataFrame:
     Replaces the prior ``_fill_tier_defaults`` + ``_null_fields_above_tier`` chain,
     which together produced 250–600 ``withColumn`` ops per call (one per schema
     field) and exploded the catalyst plan on larger presets.
+
+    Each branch uses ``alias(name, metadata=...)`` to carry the canonical
+    schema's per-field metadata (SAP description) onto the projected column,
+    so the final DataFrame schema preserves descriptions through to the BQ
+    writer with no additional plan nodes.
     """
     populated = fields_for_complexity(complexity)
     excl = excluded_sql_names()
@@ -111,12 +116,13 @@ def _apply_tier(df: DataFrame, complexity: str) -> DataFrame:
     select_exprs = []
     for field in schema.fields:
         name = field.name
+        meta = dict(field.metadata) if field.metadata else None
         if name in excl or name not in populated:
-            select_exprs.append(F.lit(None).cast(field.dataType).alias(name))
+            select_exprs.append(F.lit(None).cast(field.dataType).alias(name, metadata=meta))
         elif name in defaults:
-            select_exprs.append(F.coalesce(F.col(name), defaults[name]).alias(name))
+            select_exprs.append(F.coalesce(F.col(name), defaults[name]).alias(name, metadata=meta))
         else:
-            select_exprs.append(F.col(name))
+            select_exprs.append(F.col(name).alias(name, metadata=meta))
     return df.select(*select_exprs)
 
 

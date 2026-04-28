@@ -14,6 +14,7 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
+from ..config._field_descriptions_generated import FIELD_DESCRIPTIONS
 from ..config._field_specs_generated import FIELD_SPECS
 
 _STYPE_TO_SPARK = {
@@ -31,10 +32,19 @@ def spark_type_for_spec(stype: str):
 
 
 def acdoca_schema() -> StructType:
-    fields = [
-        StructField(sql, spark_type_for_spec(stype), nullable=True)
-        for _sap, sql, _tier, stype in FIELD_SPECS
-    ]
+    """Canonical 538-column ACDOCA schema, with SAP descriptions on each field.
+
+    The Spark BigQuery connector reads ``StructField.metadata["description"]``
+    and writes it to the BigQuery column description on save, so descriptions
+    appear automatically in the generated table without a post-write step.
+    Lookup uses the SAP technical name (``sap``); fields absent from the XLSX
+    source fall back to no metadata.
+    """
+    fields = []
+    for sap, sql, _tier, stype in FIELD_SPECS:
+        desc = FIELD_DESCRIPTIONS.get(sap, "")
+        meta = {"description": desc} if desc else {}
+        fields.append(StructField(sql, spark_type_for_spec(stype), nullable=True, metadata=meta))
     return StructType(fields)
 
 

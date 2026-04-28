@@ -33,9 +33,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _bq_count(table_id: str) -> int:
-    """Run `bq query` with the standard CLI; return integer row count."""
-    sql = f"SELECT COUNT(*) AS n FROM `{table_id}`"
+def _bq_query(sql: str) -> list[str]:
+    """Run `bq query` with the standard CLI; return CSV lines minus the header row."""
     out = subprocess.check_output(
         [
             "bq",
@@ -47,8 +46,23 @@ def _bq_count(table_id: str) -> int:
         ],
         text=True,
     )
-    # Output: "n\n<count>\n"
-    return int(out.strip().splitlines()[-1])
+    return out.strip().splitlines()[1:]
+
+
+def _bq_count(table_id: str) -> int:
+    rows = _bq_query(f"SELECT COUNT(*) AS n FROM `{table_id}`")
+    return int(rows[-1])
+
+
+def _bq_column_description(table_id: str, column: str) -> str:
+    """Read `description` for one column from INFORMATION_SCHEMA.COLUMNS."""
+    project, dataset, table = table_id.split(".")
+    sql = (
+        f"SELECT description FROM `{project}.{dataset}.INFORMATION_SCHEMA.COLUMNS` "
+        f"WHERE table_name = '{table}' AND column_name = '{column}'"
+    )
+    rows = _bq_query(sql)
+    return rows[-1].strip('"') if rows else ""
 
 
 def _bq_drop(table_id: str) -> None:
@@ -126,6 +140,13 @@ def test_bq_write_canary_globe_lite() -> None:
 
         observed = _bq_count(table_id)
         assert observed == expected, f"BQ row count {observed} != expected {expected}"
+
+        # Schema metadata round-trip — confirms StructField description rode along
+        # to BigQuery's INFORMATION_SCHEMA via the connector.
+        rbukrs_desc = _bq_column_description(table_id, "RBUKRS")
+        assert rbukrs_desc == "Company Code", (
+            f"BQ description for RBUKRS = {rbukrs_desc!r}, expected 'Company Code'"
+        )
     finally:
         _bq_drop(table_id)
         spark.stop()
