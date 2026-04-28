@@ -211,6 +211,20 @@ Choose **delta**, **parquet**, or **bigquery** in the UI. Two opt-in checkboxes 
 
 For BigQuery, provide **`project.dataset.table`** and a **GCS staging bucket**; the app restarts the local Spark session with `spark.jars.packages` set to load the BigQuery connector. Optional env defaults: `ACDOCA_BQ_TABLE`, `ACDOCA_GCS_TEMP_BUCKET`, `ACDOCA_SPARK_BQ_PACKAGE`. See [`acdoca_generator/utils/spark_writer.py`](acdoca_generator/utils/spark_writer.py) for write paths and options.
 
+## Run from BigQuery Studio
+
+For an interactive UI that lives inside the BigQuery console (no Streamlit hosting required), use [`notebooks/02_generate_acdoca_bq_studio.ipynb`](notebooks/02_generate_acdoca_bq_studio.ipynb).
+
+It clones this repo into the notebook runtime, installs `acdoca_generator` in editable mode, and renders an `ipywidgets` form (preset dropdown, industry, country multi-select, complexity, sliders for txn-per-CC-per-period / IC% / SC chain count / challenged-share, checkboxes for supply-chain / segment-PL / year-end trueup, Generate button). Clicking Generate writes to the configured BigQuery table.
+
+**Setup, in order:**
+1. Run [`notebooks/00_bq_setup.sql`](notebooks/00_bq_setup.sql) (replace `MY_PROJECT`) to create the dataset.
+2. Create a GCS staging bucket (`gsutil mb -p $PROJECT_ID -l $REGION gs://$BUCKET`) and grant your user `objectAdmin`.
+3. Open BigQuery Studio → **+ Add → Python notebook**, pick the **PySpark** runtime.
+4. Paste in `02_generate_acdoca_bq_studio.ipynb` (or import via the file uploader), edit the `PROJECT_ID` / `BQ_DATASET` / `GCS_BUCKET` constants in cell 2, run cells top-to-bottom.
+
+The notebook authenticates as your Google identity (no service account JSON), uses BQ Studio's built-in Spark + BigQuery connector (no `spark.jars.packages`), and runs the same `generate_acdoca_dataframe` + `write_acdoca_table` code path as `scripts/run_generate_bq.py`.
+
 ## Git and GitHub (SSH)
 
 This repo uses an SSH remote (`git@github.com:...`). On macOS, generate a key (`ssh-keygen -t ed25519`), add `~/.ssh/id_ed25519.pub` under **GitHub → Settings → SSH and GPG keys**, then confirm with `ssh -T git@github.com`.
