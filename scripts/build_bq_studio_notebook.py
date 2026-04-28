@@ -366,6 +366,33 @@ display(form)
 '''
 
 
+# Cells 10 + 13 originally aliased COUNT(*) AS rows. ``rows`` is a reserved
+# keyword in BigQuery GoogleSQL (used by the VALUES ROWS(...) inline-array
+# syntax) and unaliased uses fail with a parse error at the SELECT clause.
+# Rewriting the alias to ``n_rows`` avoids the conflict.
+_VERIFY_CELL = '''from google.cloud import bigquery
+
+client = bigquery.Client(project=PROJECT_ID)
+df = client.query(f"""
+    SELECT COUNT(*) AS n_rows,
+           MIN(GJAHR) AS y_min,
+           MAX(GJAHR) AS y_max,
+           COUNT(DISTINCT RBUKRS) AS n_company_codes
+    FROM `{FULL_BQ_TABLE}`
+""").to_dataframe()
+df
+'''
+
+_FLOWTYPE_CELL = '''client.query(f"""
+    SELECT SUBSTR(AWREF, 1, 2) AS prefix, COUNT(*) AS n_rows
+    FROM `{FULL_BQ_TABLE}`
+    WHERE AWREF IS NOT NULL AND AWREF != ''
+    GROUP BY prefix
+    ORDER BY prefix
+""").to_dataframe()
+'''
+
+
 def main() -> int:
     nb = json.loads(_NB.read_text())
 
@@ -375,7 +402,11 @@ def main() -> int:
     # 2. Replace cell 8 (form)
     nb["cells"][8]["source"] = _FORM_CELL.splitlines(keepends=True)
 
-    # 3. Hide source on every code cell (Colab + JupyterLab)
+    # 3. Replace cells 10 + 13 (BigQuery verify + flow-type SQL — drop reserved-keyword alias)
+    nb["cells"][10]["source"] = _VERIFY_CELL.splitlines(keepends=True)
+    nb["cells"][13]["source"] = _FLOWTYPE_CELL.splitlines(keepends=True)
+
+    # 4. Hide source on every code cell (Colab + JupyterLab)
     for cell in nb["cells"]:
         if cell["cell_type"] != "code":
             continue
