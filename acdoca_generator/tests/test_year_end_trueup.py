@@ -136,6 +136,42 @@ def test_trueup_blart_is_manual(spark) -> None:
     assert bad_blart == 0
 
 
+def test_trueup_rows_get_tier_fill_defaults(spark) -> None:
+    """Trueup rows must inherit the tier-fill defaults the main pipeline applies.
+
+    Regression for: BQ load failed with "Required field VORGN cannot be null"
+    because trueup rows skipped _apply_tier and ended up with NULL in
+    tier-defaulted columns (VORGN, KTOSL, FCSL, etc.). The fix: pipeline.py
+    runs _apply_tier on the trueup output before unionByName.
+    """
+    from acdoca_generator.generators.pipeline import GenerationConfig, generate_acdoca_dataframe
+
+    cfg = GenerationConfig(
+        industry_key="pharmaceutical",
+        country_isos=["US", "DE", "CH", "IE", "GB"],
+        fiscal_year=2026,
+        fiscal_variant="calendar",
+        complexity="medium",  # tier where VORGN, KTOSL, FCSL get populated
+        txn_per_cc_per_period=20,
+        ic_pct=0.2,
+        include_reversals=False,
+        include_closing=False,
+        seed=11,
+        include_supply_chain=True,
+        sc_chains_per_period=5,
+        include_year_end_trueup=True,
+    )
+    res = generate_acdoca_dataframe(spark, cfg)
+    tu_lines = res.acdoca_df.filter(F.col("AWREF").startswith("TU"))
+    n = tu_lines.count()
+    if n == 0:
+        pytest.skip("No trueup needed for this seed")
+    null_vorgn = tu_lines.filter(F.col("VORGN").isNull()).count()
+    null_ktosl = tu_lines.filter(F.col("KTOSL").isNull()).count()
+    assert null_vorgn == 0, f"{null_vorgn}/{n} trueup rows have NULL VORGN"
+    assert null_ktosl == 0, f"{null_ktosl}/{n} trueup rows have NULL KTOSL"
+
+
 def test_trueup_toggle_off_produces_no_rows(spark) -> None:
     """include_year_end_trueup=False → no TU rows."""
     from acdoca_generator.generators.pipeline import GenerationConfig, generate_acdoca_dataframe

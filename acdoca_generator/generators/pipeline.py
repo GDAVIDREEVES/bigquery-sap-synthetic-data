@@ -224,6 +224,13 @@ def generate_acdoca_dataframe(spark: SparkSession, cfg: GenerationConfig) -> Gen
             spark, acc, cidx, cfg.fiscal_year, cfg.seed, cfg.group_currency,
         )
         if tu_df is not None:
+            # Run the trueup output through _apply_tier so its tier-defaulted
+            # columns (VORGN="RFBU", KTOSL="", FCSL=HSL.cast(...), etc.) are
+            # populated the same way as the main accumulator. Without this,
+            # trueup rows have NULL in those columns and the BQ load job
+            # fails with "Required field VORGN cannot be null" because BQ
+            # inferred those columns as REQUIRED on the first write.
+            tu_df = _apply_tier(tu_df, cfg.complexity)
             acc = acc.unionByName(tu_df)
 
     seg_pl_out: Optional[DataFrame] = None
