@@ -376,6 +376,45 @@ display(form)
 '''
 
 
+# Cell 6 — the SparkSession builder. The default PySpark heap is ~1 GB,
+# which was OOMing during BigQuery writes at very_high tier × ~150K rows
+# (the GCS connector buffers upload chunks per writer; 8 writers × buffered
+# chunks blows past 1 GB). On Vertex Workbench n1-standard-8 (30 GB RAM),
+# we can safely give the JVM 8 GB. spark.driver.memory must be set on the
+# builder *before* the JVM launches (lazy at first .getOrCreate()) — once
+# the JVM is up, the max heap is fixed. spark.driver.maxResultSize=4g
+# allows .collect() of larger results (default 1g would otherwise fail
+# during result aggregation for big runs).
+_SPARK_CELL = '''from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+
+from acdoca_generator.generators.pipeline import GenerationConfig, generate_acdoca_dataframe
+from acdoca_generator.utils.spark_writer import GenerationParams, write_acdoca_table
+from acdoca_generator.config.industries import industry_keys
+from acdoca_generator.config.presets import DEMO_PRESETS, get_preset, preset_keys
+
+# Spark session with BigQuery + GCS connectors wired in.
+# - spark.jars.packages downloads the BigQuery connector from Maven (cached after first run).
+# - spark.jars points at the shaded GCS connector JAR section 1 downloaded.
+# - fs.gs.impl + auth.type tell Hadoop how to talk to gs:// using ADC.
+# - spark.driver.memory=8g lifts the JVM heap so very_high-tier × 100K+ row
+#   writes don't OOM on the GCS upload chunk buffers (default ~1 GB is too small).
+spark = (
+    SparkSession.builder
+    .config("spark.jars.packages", "com.google.cloud.spark:spark-3.5-bigquery:0.44.1")
+    .config("spark.jars", GCS_JAR)
+    .config("spark.hadoop.fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem")
+    .config("spark.hadoop.fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS")
+    .config("spark.hadoop.fs.gs.auth.type", "APPLICATION_DEFAULT")
+    .config("spark.driver.memory", "8g")
+    .config("spark.driver.maxResultSize", "4g")
+    .config("spark.sql.shuffle.partitions", "8")
+    .getOrCreate()
+)
+print("Spark version:", spark.version)
+'''
+
+
 # Cells 10 + 13 originally aliased COUNT(*) AS rows. ``rows`` is a reserved
 # keyword in BigQuery GoogleSQL (used by the VALUES ROWS(...) inline-array
 # syntax) and unaliased uses fail with a parse error at the SELECT clause.
@@ -409,14 +448,17 @@ def main() -> int:
     # 1. Replace cell 0 (intro)
     nb["cells"][0]["source"] = _INTRO_MD.splitlines(keepends=True)
 
-    # 2. Replace cell 8 (form)
+    # 2. Replace cell 6 (Spark session — heap config for larger writes)
+    nb["cells"][6]["source"] = _SPARK_CELL.splitlines(keepends=True)
+
+    # 3. Replace cell 8 (form)
     nb["cells"][8]["source"] = _FORM_CELL.splitlines(keepends=True)
 
-    # 3. Replace cells 10 + 13 (BigQuery verify + flow-type SQL — drop reserved-keyword alias)
+    # 4. Replace cells 10 + 13 (BigQuery verify + flow-type SQL — drop reserved-keyword alias)
     nb["cells"][10]["source"] = _VERIFY_CELL.splitlines(keepends=True)
     nb["cells"][13]["source"] = _FLOWTYPE_CELL.splitlines(keepends=True)
 
-    # 4. Hide source on every code cell (Colab + JupyterLab)
+    # 5. Hide source on every code cell (Colab + JupyterLab)
     for cell in nb["cells"]:
         if cell["cell_type"] != "code":
             continue
