@@ -8,10 +8,9 @@ Design and column coverage follow [SPEC-ACDOCA-Synthetic-Generator.md](SPEC-ACDO
 
 - [Highlights](#highlights)
 - [Install](#install)
-- [Streamlit UI](#streamlit-ui)
+- [Run it: BigQuery Studio Jupyter notebook](#run-it-bigquery-studio-jupyter-notebook)
 - [Programmatic API](#programmatic-api)
-- [Generate to BigQuery](#generate-to-bigquery)
-- [BigQuery Studio notebook](#bigquery-studio-notebook)
+- [Generate to BigQuery (CLI)](#generate-to-bigquery-cli)
 - [Tests and CI](#tests-and-ci)
 - [Local Spark gotchas](#local-spark-gotchas)
 - [Project layout](#project-layout)
@@ -22,7 +21,7 @@ Design and column coverage follow [SPEC-ACDOCA-Synthetic-Generator.md](SPEC-ACDO
 
 - **538-column ACDOCA schema** aligned with the spec appendix (sanitized names, e.g. `.INCLU-_PN` → `INCLU_PN`).
 - **Industry templates** drive domestic GL mix, posting-period seasonality, default intercompany share, and optional entity-role hints per country.
-- **Streamlit UI** ([`acdoca_generator/app.py`](acdoca_generator/app.py)) with named demo presets, custom parameters, and strict-vs-fast validation.
+- **BigQuery Studio Jupyter notebook** ([`notebooks/02_generate_acdoca_bq_studio.ipynb`](notebooks/02_generate_acdoca_bq_studio.ipynb)) is the supported run path: an `ipywidgets` form with named demo presets, custom parameters, and strict-vs-fast validation, running inside the BigQuery console with Spark + the BQ connector pre-wired.
 - **TP role taxonomy** (20 entity roles): manufacturing (`TOLL`, `CMFR`, `LMFR`, `FRMF`, `IPLIC`); distribution (`LRD`, `FFD`, `COMM`, `COMA`, `BSDIST`); services (`RDSC`, `RSP`, `SSP`, `SSC`); IP & principal (`IPDEV`, `IPPR`, `ENTR`); hybrid (`RHQ`, `CPE`, `FINC`). Each role carries an operating-margin band and typical-country list — see [`config/operating_models.py`](acdoca_generator/config/operating_models.py).
 - **Functional area (RFAREA)** populated per line, role-conditioned: e.g. LRD payroll → `0200` (Sales), IPPR payroll → `0300` (Admin), TOLL payroll → `0100` (Production), RDSC payroll → `0400` (R&D). Drives the segment-level P&L below — see [`config/functional_areas.py`](acdoca_generator/config/functional_areas.py).
 - **Financial supply chain** (optional, preset `supply_chain_demo`): multi-hop flows with materials, TP method, markups, plants, and linked IC postings. Multi-template per industry, causal POPER ordering within a chain, optional `fanout_all` for one-to-many hops, triangular markup distribution, and per-step `tp_method_key` override.
@@ -35,6 +34,10 @@ Design and column coverage follow [SPEC-ACDOCA-Synthetic-Generator.md](SPEC-ACDO
 
 ## Install
 
+For the Jupyter notebook path ([next section](#run-it-bigquery-studio-jupyter-notebook)) the BigQuery Studio runtime installs the package itself — you don't need to install anything locally.
+
+For the CLI, programmatic API, and tests:
+
 ```bash
 git clone https://github.com/GDAVIDREEVES/bigquery-sap-synthetic-data.git
 cd bigquery-sap-synthetic-data
@@ -45,22 +48,25 @@ pip install -e ".[dev,fast]"   # tests + Polars fast path
 
 Optional extras: `.[viz]` for the Dash supply-chain viewer; `.[dev]` alone for tests without Polars (note: `not spark` tests that import Polars will fail without `[fast]`).
 
-## Streamlit UI
+## Run it: BigQuery Studio Jupyter notebook
 
-```bash
-streamlit run acdoca_generator/app.py
-```
+The supported, recommended run path. The notebook is [`notebooks/02_generate_acdoca_bq_studio.ipynb`](notebooks/02_generate_acdoca_bq_studio.ipynb). It clones this repo into the BigQuery Studio runtime, installs `acdoca_generator` in editable mode, and renders an `ipywidgets` form (preset dropdown, industry, country multi-select, complexity, sliders for txn-per-CC-per-period / IC% / SC chain count / challenged-share, checkboxes for supply-chain / segment-PL / year-end trueup, Generate button). Clicking Generate writes to the configured BigQuery table.
 
-Choose **delta**, **parquet**, or **bigquery** in the UI. Two opt-in checkboxes surface the realism extras:
+You authenticate as your Google identity (no service-account JSON), and the runtime ships with Spark + the BigQuery connector pre-wired — no `spark.jars.packages`, no GCS Hadoop connector JAR to manage, no local Java install.
 
-- **Include financial supply chain** — generates `supply_chain_flows_df` and previews it; offers a tempfile path for the Dash viewer.
-- **Compute segment P&L** — generates `segment_pl_df` and previews the entity × role × segment × period rollup with the functional opex split.
+Setup, in order:
 
-For BigQuery, provide `project.dataset.table` and a GCS staging bucket; the app restarts the local Spark session with `spark.jars.packages` set to load the BigQuery connector. Optional env defaults: `ACDOCA_BQ_TABLE`, `ACDOCA_GCS_TEMP_BUCKET`, `ACDOCA_SPARK_BQ_PACKAGE`. See [`acdoca_generator/utils/spark_writer.py`](acdoca_generator/utils/spark_writer.py) for write paths and options.
+1. Run [`notebooks/00_bq_setup.sql`](notebooks/00_bq_setup.sql) (replace `MY_PROJECT`) to create the dataset.
+2. Create a GCS staging bucket (`gsutil mb -p $PROJECT_ID -l $REGION gs://$BUCKET`) and grant your user `roles/storage.objectAdmin`.
+3. Open BigQuery Studio → **+ Add → Python notebook**, pick the **PySpark** runtime.
+4. Import [`notebooks/02_generate_acdoca_bq_studio.ipynb`](notebooks/02_generate_acdoca_bq_studio.ipynb) (or paste it into a new notebook), edit `PROJECT_ID` / `BQ_DATASET` / `GCS_BUCKET` in cell 2, and run cells top-to-bottom.
+5. In the rendered form, pick a preset (start with `quick_smoke` to confirm wiring), tick the realism extras you want, and click **Generate**.
+
+The notebook runs the same `generate_acdoca_dataframe` + `write_acdoca_table` code path as `scripts/run_generate_bq.py`. See [README-WORKFLOW.md → Workflow A](README-WORKFLOW.md#a-bigquery-studio-jupyter-notebook-primary) for the full step-by-step including verification queries and iteration patterns.
 
 ## Programmatic API
 
-Generate a small dataset with supply chain + segment P&L:
+Generate a small dataset with supply chain + segment P&L from Python (used by integration tests and downstream code, not for ad-hoc runs):
 
 ```python
 from pyspark.sql import SparkSession
@@ -91,9 +97,9 @@ result.segment_pl_df          # P&L: revenue, cogs, opex_rd/sm/ga/dist/productio
 
 A ready-to-run smoke script lives at [`scripts/dev_smoke_supply_chain.py`](scripts/dev_smoke_supply_chain.py); it prints the segment P&L, asserts IC document balance, and exports `flows.json` for the Dash viewer.
 
-## Generate to BigQuery
+## Generate to BigQuery (CLI)
 
-Output goes to BigQuery via the [Spark BigQuery connector](https://github.com/GoogleCloudDataproc/spark-bigquery-connector) (default Maven coordinate `com.google.cloud.spark:spark-3.5-bigquery:0.44.1`, overridable with `ACDOCA_SPARK_BQ_PACKAGE`).
+The CLI is the high-volume / scripted alternative to the Jupyter notebook. Use it for `ml_features`, ~1M-row custom configs, and CI canaries. Output goes to BigQuery via the [Spark BigQuery connector](https://github.com/GoogleCloudDataproc/spark-bigquery-connector) (default Maven coordinate `com.google.cloud.spark:spark-3.5-bigquery:0.44.1`, overridable with `ACDOCA_SPARK_BQ_PACKAGE`).
 
 ### Prerequisites
 
@@ -112,7 +118,7 @@ curl -L -o ~/.spark-jars/gcs-connector-hadoop3-2.2.21-shaded.jar \
   https://repo1.maven.org/maven2/com/google/cloud/bigdataoss/gcs-connector/hadoop3-2.2.21/gcs-connector-hadoop3-2.2.21-shaded.jar
 ```
 
-Both [`scripts/run_generate_bq.py`](scripts/run_generate_bq.py) and the Streamlit app auto-detect this JAR at `~/.spark-jars/gcs-connector-hadoop3-2.2.21-shaded.jar` (overridable via `ACDOCA_SPARK_GCS_JAR`). Without it, BigQuery writes fail with `UnsupportedFileSystemException: No FileSystem for scheme "gs"`. The shaded variant is preferred over `spark.jars.packages` because the unshaded gcs-connector pulls a fragile transitive tree from Maven Central.
+[`scripts/run_generate_bq.py`](scripts/run_generate_bq.py) auto-detects this JAR at `~/.spark-jars/gcs-connector-hadoop3-2.2.21-shaded.jar` (overridable via `ACDOCA_SPARK_GCS_JAR`). Without it, BigQuery writes fail with `UnsupportedFileSystemException: No FileSystem for scheme "gs"`. The shaded variant is preferred over `spark.jars.packages` because the unshaded gcs-connector pulls a fragile transitive tree from Maven Central.
 
 ### 1. Create the BigQuery dataset
 
@@ -130,7 +136,7 @@ python scripts/run_generate_bq.py \
   --preset quick_smoke
 ```
 
-Use `--help` for all flags. Parameters match the PySpark notebook and Streamlit UI ([table below](#parameters-notebook--cli)). Override the connector package with `ACDOCA_SPARK_BQ_PACKAGE` if your Spark version differs.
+Use `--help` for all flags. Parameters match the BigQuery Studio notebook form ([table below](#parameters-notebook--cli)). Override the connector package with `ACDOCA_SPARK_BQ_PACKAGE` if your Spark version differs.
 
 #### Larger runs (`ml_features` and beyond)
 
@@ -160,38 +166,23 @@ For runtime-selection guidance (BQ Studio default vs Vertex AI Workbench vs lapt
 
 ### 3. Notebook on Dataproc / Vertex Workbench
 
-[`notebooks/01_generate_acdoca_bq.py`](notebooks/01_generate_acdoca_bq.py) is a parameterized PySpark notebook that writes with `output_format=bigquery`. Ensure the cluster or session has the Spark BigQuery connector JAR (e.g. a Dataproc image that supports `spark-3.5-bigquery`, or `spark.jars.packages` as in [`scripts/run_generate_bq.py`](scripts/run_generate_bq.py)). Widgets/parameters align with the Streamlit app and CLI; for BigQuery specifically:
+[`notebooks/01_generate_acdoca_bq.py`](notebooks/01_generate_acdoca_bq.py) is a parameterized PySpark notebook (cells delimited by `# %%`) that writes with `output_format=bigquery`. Ensure the cluster or session has the Spark BigQuery connector JAR (e.g. a Dataproc image that supports `spark-3.5-bigquery`, or `spark.jars.packages` as in [`scripts/run_generate_bq.py`](scripts/run_generate_bq.py)). Parameters align with the BigQuery Studio notebook and CLI; for BigQuery specifically:
 
 - `full_table_name`: `project.dataset.table` (BigQuery three-part name).
 - `gcs_temp_bucket`: staging bucket name, or rely on `ACDOCA_GCS_TEMP_BUCKET`.
 
 ### Parameters (notebook / CLI)
 
-| Parameter | Notebook / Streamlit | CLI (`run_generate_bq.py`) |
-|-----------|----------------------|----------------------------|
-| `preset`, `validation_profile`, `industry_key`, `country_isos_csv`, `fiscal_year`, `fiscal_variant`, `complexity`, `txn_per_cc_per_period`, `ic_pct`, `include_reversals`, `include_closing`, `seed` | widgets / UI | `--ic-pct`, `--country-isos`, etc. |
-| `full_table_name` | widget / default | `--full-table-name` |
-| `output_format` | N/A in BQ notebook (always BigQuery) | N/A |
-| `gcs_temp_bucket` | widget or `ACDOCA_GCS_TEMP_BUCKET` | `--gcs-temp-bucket` or env |
+| Parameter | BigQuery Studio notebook form | CLI (`run_generate_bq.py`) |
+|-----------|-------------------------------|----------------------------|
+| `preset`, `validation_profile`, `industry_key`, `country_isos_csv`, `fiscal_year`, `fiscal_variant`, `complexity`, `txn_per_cc_per_period`, `ic_pct`, `include_reversals`, `include_closing`, `seed` | widgets | `--ic-pct`, `--country-isos`, etc. |
+| `full_table_name` | `PROJECT_ID.BQ_DATASET.BQ_TABLE` constants in cell 2 | `--full-table-name` |
+| `output_format` | N/A (always BigQuery) | N/A |
+| `gcs_temp_bucket` | `GCS_BUCKET` constant in cell 2 (or `ACDOCA_GCS_TEMP_BUCKET`) | `--gcs-temp-bucket` or env |
 
 ### Dataproc / `spark-submit`
 
 [`scripts/run_generate_bq.py`](scripts/run_generate_bq.py) configures `spark.jars.packages` for a local `SparkSession`. On Dataproc, submit it as a PySpark job: install this package on the cluster (initialization action or custom image with `pip install`), attach the BigQuery connector (e.g. `gs://spark-lib/bigquery/spark-3.5-bigquery-0.44.1.jar`, or `--packages` on `spark-submit`), and pass the same CLI arguments after `--`. With plain `spark-submit --packages com.google.cloud.spark:spark-3.5-bigquery:0.44.1`, ensure driver and executors can import `acdoca_generator` (zip the repo with `pip wheel` / venv layout as your platform requires).
-
-## BigQuery Studio notebook
-
-For an interactive UI inside the BigQuery console (no Streamlit hosting required), use [`notebooks/02_generate_acdoca_bq_studio.ipynb`](notebooks/02_generate_acdoca_bq_studio.ipynb).
-
-It clones this repo into the notebook runtime, installs `acdoca_generator` in editable mode, and renders an `ipywidgets` form (preset dropdown, industry, country multi-select, complexity, sliders for txn-per-CC-per-period / IC% / SC chain count / challenged-share, checkboxes for supply-chain / segment-PL / year-end trueup, Generate button). Clicking Generate writes to the configured BigQuery table.
-
-Setup, in order:
-
-1. Run [`notebooks/00_bq_setup.sql`](notebooks/00_bq_setup.sql) (replace `MY_PROJECT`) to create the dataset.
-2. Create a GCS staging bucket (`gsutil mb -p $PROJECT_ID -l $REGION gs://$BUCKET`) and grant your user `objectAdmin`.
-3. Open BigQuery Studio → **+ Add → Python notebook**, pick the **PySpark** runtime.
-4. Paste in `02_generate_acdoca_bq_studio.ipynb` (or import via the file uploader), edit `PROJECT_ID` / `BQ_DATASET` / `GCS_BUCKET` in cell 2, run cells top-to-bottom.
-
-The notebook authenticates as your Google identity (no service account JSON), uses BQ Studio's built-in Spark + BigQuery connector (no `spark.jars.packages`), and runs the same `generate_acdoca_dataframe` + `write_acdoca_table` code path as the CLI.
 
 ## Tests and CI
 
@@ -271,7 +262,9 @@ export SPARK_LOCAL_IP=127.0.0.1
 
 | Path | Role |
 |------|------|
-| [`acdoca_generator/app.py`](acdoca_generator/app.py) | Streamlit entry point |
+| [`notebooks/02_generate_acdoca_bq_studio.ipynb`](notebooks/02_generate_acdoca_bq_studio.ipynb) | Primary run path: BigQuery Studio Jupyter notebook with `ipywidgets` form |
+| [`notebooks/00_bq_setup.sql`](notebooks/00_bq_setup.sql) | One-time BigQuery dataset DDL |
+| [`notebooks/01_generate_acdoca_bq.py`](notebooks/01_generate_acdoca_bq.py) | Parameterized PySpark notebook for Dataproc / Vertex Workbench |
 | [`acdoca_generator/config/`](acdoca_generator/config/) | Industries, presets, countries, chart of accounts, field tiers, operating models, functional areas, supply-chain templates, TP methods, materials |
 | [`acdoca_generator/generators/`](acdoca_generator/generators/) | Pipeline, master data, transactions, intercompany, supply chain, amounts, closing, document |
 | [`acdoca_generator/aggregations/`](acdoca_generator/aggregations/) | Segment-level P&L rollup (`build_segment_pl`); functional opex split driven by RFAREA |
@@ -280,7 +273,6 @@ export SPARK_LOCAL_IP=127.0.0.1
 | [`acdoca_generator/dash_app/`](acdoca_generator/dash_app/) | Optional Dash app: interactive supply-chain network graph |
 | [`acdoca_generator/validators/`](acdoca_generator/validators/) | Balance and consistency checks |
 | [`acdoca_generator/utils/`](acdoca_generator/utils/) | Spark schema and Delta / Parquet / BigQuery writer |
-| [`notebooks/`](notebooks/) | BigQuery setup SQL and PySpark generation notebook |
 | [`scripts/run_generate_bq.py`](scripts/run_generate_bq.py) | CLI: generate and write to BigQuery (Spark + connector) |
 | [`scripts/dev_smoke_supply_chain.py`](scripts/dev_smoke_supply_chain.py) | Local smoke runner: small generation with supply chain + segment P&L, exports flows JSON for the Dash viewer |
 | [`diagnostics/`](diagnostics/) | Findings/notes from realism reviews (e.g. [`sc-realism-2026-04-27.md`](diagnostics/sc-realism-2026-04-27.md)) |
