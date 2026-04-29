@@ -36,26 +36,26 @@ Use the helper script (idempotent — skips if the instance already exists):
 ./scripts/provision_vertex_workbench.sh
 ```
 
-Or run the underlying `gcloud` command directly:
+Or run the underlying `gcloud` command directly (Vertex AI Workbench Instances — the unified product that replaced the deprecated user-managed notebooks API):
 
 ```bash
 PROJECT=acdoca-synthetic-greg
 ZONE=us-central1-a
 INSTANCE=acdoca-form
-gcloud notebooks instances create "$INSTANCE" \
+gcloud workbench instances create "$INSTANCE" \
   --location="$ZONE" \
   --project="$PROJECT" \
   --machine-type=n1-standard-8 \
-  --vm-image-project=deeplearning-platform-release \
-  --vm-image-family=common-cpu-notebooks \
-  --metadata=idle-shutdown=true,idle-shutdown-timeout=3600
+  --vm-image-project=cloud-notebooks-managed \
+  --vm-image-family=workbench-instances \
+  --metadata=idle-timeout-seconds=3600
 ```
 
-The `idle-shutdown` flags auto-stop the VM after 60 min of inactivity so you don't bleed money when you forget to turn it off.
+The `idle-timeout-seconds` metadata auto-stops the VM after 60 min of inactivity so you don't bleed money when you forget to turn it off.
 
 ### Using it
 
-1. After `gcloud notebooks instances create` finishes, the JupyterLab URL appears in the GCP console at *Vertex AI → Workbench → User-managed notebooks*.
+1. After `gcloud workbench instances create` finishes, the JupyterLab URL appears in the GCP console at *Vertex AI → Workbench → Instances*: <https://console.cloud.google.com/vertex-ai/workbench/instances>.
 2. Click *Open JupyterLab*. The instance has the same Python + Spark stack as BQ Studio.
 3. Open `notebooks/02_generate_acdoca_bq_studio.ipynb` (clone the repo first via *File → New → Terminal* and `git clone https://github.com/GDAVIDREEVES/bigquery-sap-synthetic-data.git`).
 4. Click *Run all*. Same form, same widgets, ~10× the headroom.
@@ -67,7 +67,7 @@ The `idle-shutdown` flags auto-stop the VM after 60 min of inactivity so you don
 ### Deprovisioning
 
 ```bash
-gcloud notebooks instances delete acdoca-form --location=us-central1-a --project=acdoca-synthetic-greg
+gcloud workbench instances delete acdoca-form --location=us-central1-a --project=acdoca-synthetic-greg
 ```
 
 ---

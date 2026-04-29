@@ -33,26 +33,29 @@ echo "  instance      = $INSTANCE"
 echo "  machine type  = $MACHINE_TYPE"
 echo "  idle shutdown = ${IDLE_SHUTDOWN_SECONDS}s"
 
-if gcloud notebooks instances describe "$INSTANCE" \
+if gcloud workbench instances describe "$INSTANCE" \
         --location="$ZONE" \
         --project="$PROJECT" \
         >/dev/null 2>&1; then
     echo "Instance '$INSTANCE' already exists in $ZONE. Skipping create."
-    echo "Open: https://console.cloud.google.com/vertex-ai/workbench/user-managed?project=$PROJECT"
+    echo "Open: https://console.cloud.google.com/vertex-ai/workbench/instances?project=$PROJECT"
     exit 0
 fi
 
-gcloud notebooks instances create "$INSTANCE" \
+# Vertex AI Workbench Instances (the unified product replacing the deprecated
+# user-managed notebooks API). Idle-shutdown is set via metadata; GCP honors
+# it on the workbench-instances image family.
+gcloud workbench instances create "$INSTANCE" \
     --location="$ZONE" \
     --project="$PROJECT" \
     --machine-type="$MACHINE_TYPE" \
-    --vm-image-project=deeplearning-platform-release \
-    --vm-image-family=common-cpu-notebooks \
-    --metadata="idle-shutdown=true,idle-shutdown-timeout=${IDLE_SHUTDOWN_SECONDS}"
+    --vm-image-project=cloud-notebooks-managed \
+    --vm-image-family=workbench-instances \
+    --metadata="idle-timeout-seconds=${IDLE_SHUTDOWN_SECONDS}"
 
 echo
 echo "Created. Open JupyterLab via:"
-echo "  https://console.cloud.google.com/vertex-ai/workbench/user-managed?project=$PROJECT"
+echo "  https://console.cloud.google.com/vertex-ai/workbench/instances?project=$PROJECT"
 echo
 echo "Inside JupyterLab, open a Terminal and clone the repo:"
 echo "  git clone https://github.com/GDAVIDREEVES/bigquery-sap-synthetic-data.git"
@@ -60,4 +63,4 @@ echo "  cd bigquery-sap-synthetic-data"
 echo "Then open notebooks/02_generate_acdoca_bq_studio.ipynb and click Run all."
 echo
 echo "When done: stop the instance to avoid running costs:"
-echo "  gcloud notebooks instances stop $INSTANCE --location=$ZONE --project=$PROJECT"
+echo "  gcloud workbench instances stop $INSTANCE --location=$ZONE --project=$PROJECT"
