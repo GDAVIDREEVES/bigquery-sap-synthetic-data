@@ -70,11 +70,11 @@ from IPython.display import display, clear_output, HTML
 from acdoca_generator.config._field_descriptions_generated import FIELD_DESCRIPTIONS
 from acdoca_generator.config._field_specs_generated import FIELD_SPECS
 
-_SUPPORTED_ISOS = [
-    "US", "DE", "GB", "FR", "IE", "CH", "IN", "CN", "JP",
-    "BR", "MX", "NL", "SG", "KR", "AU", "IT", "ES", "BE",
-    "DK", "CA", "IL", "PL", "PH", "CR", "ID", "RU",
-]
+# Country list derives from the COUNTRIES registry so the form can never
+# offer an ISO that get_country() doesn't know about. Adding a new country
+# means adding it once, in countries.py.
+from acdoca_generator.config.countries import COUNTRIES as _COUNTRIES
+_SUPPORTED_ISOS = sorted(c.iso for c in _COUNTRIES)
 
 # ---------- core inputs ----------
 preset_dd = W.Dropdown(

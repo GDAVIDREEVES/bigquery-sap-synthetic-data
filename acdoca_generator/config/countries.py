@@ -39,6 +39,12 @@ COUNTRIES: tuple[Country, ...] = (
     Country("Singapore", "SG", "SGD", "K4", None, "SG", 4300),
     Country("Israel", "IL", "ILS", "K4", None, "IL", 4400),
     Country("Australia", "AU", "AUD", "K4", "V3", "AU", 6000),
+    Country("Mexico", "MX", "MXN", "K4", None, "MX", 5100),
+    Country("Poland", "PL", "PLN", "K4", None, "PL", 3950),
+    Country("Philippines", "PH", "PHP", "K4", None, "PH", 4500),
+    Country("Costa Rica", "CR", "CRC", "K4", None, "CR", 5200),
+    Country("Indonesia", "ID", "IDR", "K4", None, "ID", 4600),
+    Country("Russia", "RU", "RUB", "K4", None, "RU", 5300),
 )
 
 _ISO_MAP = {c.iso: c for c in COUNTRIES}
