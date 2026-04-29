@@ -246,8 +246,40 @@ def _bq_console_url(table_id: str) -> str:
     )
 
 
-def _render_result(cfg, table_id, df_spark):
-    """Show row count, balance, BQ link, and a 5-row sample after a successful write."""
+def _aux_table_id(table_id, suffix):
+    """Build sibling table id: {project}.{dataset}.{suffix}."""
+    project, dataset, _ = table_id.split(".")
+    return f"{project}.{dataset}.{suffix}"
+
+
+def _write_aux_table(df, aux_id, gcs_bucket):
+    """Write a non-partitioned auxiliary BQ table (segment_pl, supply_chain_flows, entity_roles).
+
+    These frames are small (hundreds to thousands of rows) and don't have BUDAT/RBUKRS to
+    partition or cluster by, so we use a simpler write than the main acdoca journal table.
+    Returns (table_id, row_count) on success, None on no-op.
+    """
+    if df is None:
+        return None
+    n = df.count()
+    if n == 0:
+        return (aux_id, 0)
+    (
+        df.write.format("bigquery")
+        .mode("overwrite")
+        .option("temporaryGcsBucket", gcs_bucket)
+        .option("createDisposition", "CREATE_IF_NEEDED")
+        .save(aux_id)
+    )
+    return (aux_id, n)
+
+
+def _render_result(cfg, table_id, df_spark, aux_writes):
+    """Show row count, balance, BQ links, and a 5-row sample after a successful write.
+
+    aux_writes: list of (table_id, row_count) tuples for auxiliary tables (segment_pl,
+    supply_chain_flows, entity_roles). Empty if those weren't requested or generated.
+    """
     with result_panel:
         clear_output()
         rows = df_spark.count()
@@ -256,6 +288,16 @@ def _render_result(cfg, table_id, df_spark):
         net = deb + cred
         url = _bq_console_url(table_id)
         balance_color = "#2c7" if abs(net) < 0.01 else "#c33"
+        aux_html = ""
+        if aux_writes:
+            aux_items = "".join(
+                f"<li><a href='{_bq_console_url(t)}' target='_blank'>{t.split('.')[-1]}</a> — {n:,} rows</li>"
+                for t, n in aux_writes
+            )
+            aux_html = (
+                f"<p style='margin:6px 0 2px 0;'><strong>Auxiliary tables:</strong></p>"
+                f"<ul style='margin:0 0 8px 18px;'>{aux_items}</ul>"
+            )
         display(HTML(
             f"<h4 style='margin:0 0 6px 0;'>✓ Wrote {rows:,} rows to {table_id}</h4>"
             f"<ul style='margin:0 0 8px 18px;'>"
@@ -265,6 +307,7 @@ def _render_result(cfg, table_id, df_spark):
             f"<li>Industry={cfg.industry_key} · countries={cfg.country_isos} · "
             f"year={cfg.fiscal_year} · complexity={cfg.complexity} · seed={cfg.seed}</li>"
             f"</ul>"
+            f"{aux_html}"
             f"<p style='margin:0 0 4px 0;'><em>Sample 5 rows from BigQuery:</em></p>"
         ))
         from google.cloud import bigquery
@@ -318,11 +361,26 @@ def _on_generate(_btn):
                 validation_profile="strict",
             )
             table_id = os.environ["ACDOCA_BQ_TABLE"]
+            gcs_bucket = os.environ["ACDOCA_GCS_TEMP_BUCKET"]
             write_acdoca_table(
                 spark, result.acdoca_df, full_table_name=table_id, gen=gen_params,
-                output_format="bigquery", gcs_temp_bucket=os.environ["ACDOCA_GCS_TEMP_BUCKET"],
+                output_format="bigquery", gcs_temp_bucket=gcs_bucket,
             )
-            _render_result(cfg, table_id, result.acdoca_df)
+
+            # Auxiliary tables: segment_pl, supply_chain_flows, entity_roles.
+            # These are small (~hundreds of rows) and reflect the form's toggle state.
+            # Each lands as project.dataset.<suffix> alongside journal_entries.
+            aux_writes = []
+            if cfg.include_segment_pl:
+                w = _write_aux_table(result.segment_pl_df, _aux_table_id(table_id, "segment_pl"), gcs_bucket)
+                if w: aux_writes.append(w)
+            if cfg.include_supply_chain:
+                w = _write_aux_table(result.supply_chain_flows_df, _aux_table_id(table_id, "supply_chain_flows"), gcs_bucket)
+                if w: aux_writes.append(w)
+            w = _write_aux_table(result.entity_roles_df, _aux_table_id(table_id, "entity_roles"), gcs_bucket)
+            if w: aux_writes.append(w)
+
+            _render_result(cfg, table_id, result.acdoca_df, aux_writes)
         except Exception as e:
             print(f"FAILED: {type(e).__name__}: {e}")
             raise
