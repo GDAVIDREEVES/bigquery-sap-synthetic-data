@@ -1,2 +1,0 @@
-# Optional pins for app deployment environments.
-# Local Streamlit: use `pip install -e .` (PySpark). BigQuery writes need the Spark BigQuery connector JAR (see README).

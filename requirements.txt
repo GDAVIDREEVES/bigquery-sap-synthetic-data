@@ -1,3 +1,2 @@
-# Runtime dependencies (library + Streamlit). For tests use: pip install -e ".[dev]"
+# Runtime dependencies. For tests use: pip install -e ".[dev]"
 pyspark>=3.5.0,<4
-streamlit>=1.28.0
