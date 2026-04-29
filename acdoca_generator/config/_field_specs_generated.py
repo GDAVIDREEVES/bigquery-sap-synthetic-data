@@ -175,7 +175,7 @@ FIELD_SPECS = [
     ("BSCHL", "BSCHL", "L", "string"),
     ("BSTAT", "BSTAT", "L", "string"),
     ("LINETYPE", "LINETYPE", "M", "string"),
-    ("KTOSL", "KTOSL", "M", "decimal2"),
+    ("KTOSL", "KTOSL", "M", "string"),
     ("SLALITTYPE", "SLALITTYPE", "V", "string"),
     ("XSPLITMOD", "XSPLITMOD", "H", "string"),
     ("USNAM", "USNAM", "L", "string"),
